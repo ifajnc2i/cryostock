@@ -4,12 +4,18 @@
 
 create extension if not exists pgcrypto;
 
--- ---------- profiles (display name per account) ----------
+-- ---------- profiles (display name per account, approval gate) ----------
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
+  approved boolean not null default false,
+  is_admin boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- in case profiles already existed from an earlier run of this script
+alter table public.profiles add column if not exists approved boolean not null default false;
+alter table public.profiles add column if not exists is_admin boolean not null default false;
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -23,6 +29,28 @@ begin
   on conflict (id) do nothing;
   return new;
 end;
+$$;
+
+-- true if the CURRENT session's user has been approved by an admin
+create or replace function public.is_approved()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce((select approved from public.profiles where id = auth.uid()), false);
+$$;
+
+-- true if the CURRENT session's user is an admin (can approve others)
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce((select is_admin from public.profiles where id = auth.uid()), false);
 $$;
 
 drop trigger if exists on_auth_user_created on auth.users;
@@ -148,7 +176,7 @@ drop trigger if exists trg_samples_audit on public.samples;
 create trigger trg_samples_audit after insert or update or delete on public.samples
   for each row execute function public.log_change();
 
--- ---------- row level security: any logged-in lab member can read/write ----------
+-- ---------- row level security: only APPROVED lab members can read/write ----------
 alter table public.profiles enable row level security;
 alter table public.tanks enable row level security;
 alter table public.racks enable row level security;
@@ -156,49 +184,58 @@ alter table public.boxes enable row level security;
 alter table public.samples enable row level security;
 alter table public.audit_log enable row level security;
 
+-- profiles: everyone can always read their OWN row (so a pending account can see
+-- its own approval status); approved members can also read everyone else's, so the
+-- app can show names in "added by" / activity log / the admin approval list.
 drop policy if exists "read profiles" on public.profiles;
-create policy "read profiles" on public.profiles for select using (auth.role() = 'authenticated');
+create policy "read profiles" on public.profiles for select
+  using (auth.uid() = id or public.is_approved());
+
+-- only an admin can flip approved/is_admin on someone else's profile
+drop policy if exists "admin updates profiles" on public.profiles;
+create policy "admin updates profiles" on public.profiles for update
+  using (public.is_admin());
 
 drop policy if exists "read tanks" on public.tanks;
-create policy "read tanks"   on public.tanks   for select using (auth.role() = 'authenticated');
+create policy "read tanks"   on public.tanks   for select using (public.is_approved());
 drop policy if exists "write tanks" on public.tanks;
-create policy "write tanks"  on public.tanks   for insert with check (auth.role() = 'authenticated');
+create policy "write tanks"  on public.tanks   for insert with check (public.is_approved());
 drop policy if exists "update tanks" on public.tanks;
-create policy "update tanks" on public.tanks   for update using (auth.role() = 'authenticated');
+create policy "update tanks" on public.tanks   for update using (public.is_approved());
 drop policy if exists "delete tanks" on public.tanks;
-create policy "delete tanks" on public.tanks   for delete using (auth.role() = 'authenticated');
+create policy "delete tanks" on public.tanks   for delete using (public.is_approved());
 
 drop policy if exists "read racks" on public.racks;
-create policy "read racks"   on public.racks   for select using (auth.role() = 'authenticated');
+create policy "read racks"   on public.racks   for select using (public.is_approved());
 drop policy if exists "write racks" on public.racks;
-create policy "write racks"  on public.racks   for insert with check (auth.role() = 'authenticated');
+create policy "write racks"  on public.racks   for insert with check (public.is_approved());
 drop policy if exists "update racks" on public.racks;
-create policy "update racks" on public.racks   for update using (auth.role() = 'authenticated');
+create policy "update racks" on public.racks   for update using (public.is_approved());
 drop policy if exists "delete racks" on public.racks;
-create policy "delete racks" on public.racks   for delete using (auth.role() = 'authenticated');
+create policy "delete racks" on public.racks   for delete using (public.is_approved());
 
 drop policy if exists "read boxes" on public.boxes;
-create policy "read boxes"   on public.boxes   for select using (auth.role() = 'authenticated');
+create policy "read boxes"   on public.boxes   for select using (public.is_approved());
 drop policy if exists "write boxes" on public.boxes;
-create policy "write boxes"  on public.boxes   for insert with check (auth.role() = 'authenticated');
+create policy "write boxes"  on public.boxes   for insert with check (public.is_approved());
 drop policy if exists "update boxes" on public.boxes;
-create policy "update boxes" on public.boxes   for update using (auth.role() = 'authenticated');
+create policy "update boxes" on public.boxes   for update using (public.is_approved());
 drop policy if exists "delete boxes" on public.boxes;
-create policy "delete boxes" on public.boxes   for delete using (auth.role() = 'authenticated');
+create policy "delete boxes" on public.boxes   for delete using (public.is_approved());
 
 drop policy if exists "read samples" on public.samples;
-create policy "read samples"   on public.samples for select using (auth.role() = 'authenticated');
+create policy "read samples"   on public.samples for select using (public.is_approved());
 drop policy if exists "write samples" on public.samples;
-create policy "write samples"  on public.samples for insert with check (auth.role() = 'authenticated');
+create policy "write samples"  on public.samples for insert with check (public.is_approved());
 drop policy if exists "update samples" on public.samples;
-create policy "update samples" on public.samples for update using (auth.role() = 'authenticated');
+create policy "update samples" on public.samples for update using (public.is_approved());
 drop policy if exists "delete samples" on public.samples;
-create policy "delete samples" on public.samples for delete using (auth.role() = 'authenticated');
+create policy "delete samples" on public.samples for delete using (public.is_approved());
 
--- audit_log: readable by lab members, never directly writable by them
+-- audit_log: readable by approved lab members, never directly writable by them
 -- (rows are inserted only by the SECURITY DEFINER trigger function above)
 drop policy if exists "read audit" on public.audit_log;
-create policy "read audit" on public.audit_log for select using (auth.role() = 'authenticated');
+create policy "read audit" on public.audit_log for select using (public.is_approved());
 
 -- ---------- realtime: let the app subscribe to live changes ----------
 do $$
@@ -216,3 +253,11 @@ begin
     alter publication supabase_realtime add table public.samples;
   end if;
 end $$;
+
+-- ---------- one-time: approve yourself as the first admin ----------
+-- New accounts (including yours, if it predates this migration) start with
+-- approved = false and is_admin = false. Run this once, with YOUR OWN email,
+-- so you can get into the app and approve everyone else from there:
+--
+-- update public.profiles set approved = true, is_admin = true
+-- where id = (select id from auth.users where email = 'YOUR_EMAIL_HERE');

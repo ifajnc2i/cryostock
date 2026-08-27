@@ -21,50 +21,37 @@ not on Anthropic's infrastructure.
 3. This creates all the tables (tanks, racks, boxes, samples, audit log), the
    Row Level Security policies, and the triggers that automatically log every change.
 
-## 3. Lock down sign-up and add lab members
+## 3. Self-signup with admin approval
 
-By default Supabase allows anyone to self-register. For a private lab tool, turn
-that off:
+Anyone can create their own account from the app's **Sign up** link — but a new
+account can't see or touch any inventory data until you approve it. This means you
+never have to create accounts by hand, while still controlling exactly who gets in.
 
-1. Go to **Authentication → Providers → Email** and turn **off** "Allow new users to
-   sign up".
+1. In Supabase, go to **Authentication → Providers → Email** and turn **off**
+   "Confirm email" (so signup doesn't need to send a verification email at all —
+   Supabase's built-in email sender has a very low rate limit meant only for
+   testing, and you don't need it for this flow).
+2. Make yourself the first admin, so you can approve everyone else. Go to
+   **SQL Editor → New query**, and run (with your own email):
 
-Then add each lab member's account. There are two ways — pick based on whether
-you've set up a custom email sender (step 3b below):
+   ```sql
+   update public.profiles set approved = true, is_admin = true
+   where id = (select id from auth.users where email = 'YOUR_EMAIL_HERE');
+   ```
 
-**Without custom email (recommended if you don't have your own domain)**: go to
-**Authentication → Users → Add user → Create new user**, enter their email, set a
-temporary password yourself (e.g. `Cryostock2026!`), and check **Auto Confirm
-User**. No email is sent at all — tell them the temporary password directly (in
-person, Slack, etc.). Once they log in, they can set their own password from the
-**Change password** button in the app's top bar. This avoids Supabase's built-in
-email sender entirely, which has a very low rate limit (a couple of emails per
-hour) meant only for testing — you'd hit it quickly inviting several people.
+   (If you don't have an account yet, sign up in the app first, then run this.)
 
-**With email invites**: **Authentication → Users → Invite user**, enter their
-email — they get a link to set their own password. This needs a custom SMTP
-provider configured first (see below) or you'll hit "email rate limit exceeded"
-after one or two invites.
+That's it. From now on:
+- Anyone visits the app and clicks **Sign up** — name, email, password.
+- They land on a "waiting for approval" screen. They can't see any data yet.
+- You open the app (as admin), and the **Inventory** tab shows a **Pending
+  approval** list at the top with an **Approve** button next to each name.
+- The moment you approve someone, they get full access automatically — no need
+  for them to sign up again or you to send anything.
 
-Either way, a `profiles` row is created for them automatically (their display name
-defaults to the part of their email before `@`; edit it any time in **Table Editor
-→ profiles**).
-
-### Optional: configure a custom email sender (for invites / password-reset emails)
-
-Needs a domain you control DNS for. If you have one:
-
-1. Create a free account at [resend.com](https://resend.com) (3,000 emails/month
-   free) and add an API key under **API Keys**.
-2. Under **Domains**, add your domain and add the SPF/DKIM DNS records Resend
-   shows you at your DNS provider. Wait for it to verify.
-3. In Supabase: **Authentication → Emails → SMTP Settings**, enable custom SMTP:
-   - Host: `smtp.resend.com`, Port: `465`, Username: `resend`, Password: your
-     Resend API key
-   - Sender email: an address `@` your verified domain (e.g. `noreply@yourdomain.com`)
-
-Without a domain, skip this — the "Add user with password" method above works
-just as well for a small lab and needs no email at all.
+You can make additional admins later (people who can also approve accounts) by
+running the same SQL update for their email, or by editing the `is_admin` column
+directly in **Table Editor → profiles**.
 
 ## 4. Get your API keys
 
@@ -114,9 +101,8 @@ save. After a minute or two your app is live at:
 https://ifajnc2i.github.io/cryostock/
 ```
 
-Share that URL with your lab. Anyone you've invited in step 3 can log in with their
-own email + password; nobody else can even see the login screen do anything useful,
-since they have no account.
+Share that URL with your lab. Anyone can sign up, but they stay locked out of the
+actual inventory until you approve them from the **Inventory** tab (step 3).
 
 **A note on privacy**: the repo can be public (it only contains app code — no
 research data ever touches GitHub). If you'd rather keep the code itself private,
@@ -138,7 +124,10 @@ needs is to reach your Supabase project over the internet.
 
 ## Day-to-day maintenance
 
-- Add/remove lab members: **Authentication → Users** in the Supabase dashboard.
+- Approve new lab members: the **Pending approval** list at the top of the
+  **Inventory** tab (as an admin). To remove someone's access, uncheck `approved`
+  for their row in **Table Editor → profiles**, or delete their account entirely
+  from **Authentication → Users** in the Supabase dashboard.
 - Browse or manually fix data: **Table Editor** in the Supabase dashboard.
 - Free tier limits (fine for a small lab): 500MB database, 50k monthly active
   users, project pauses after 1 week with zero API requests (any visit wakes it

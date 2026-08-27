@@ -360,6 +360,8 @@
   var profilesById = {};
   var auditRows = [];
   var session = null;
+  var myProfile = null;
+  var pendingProfiles = [];
   var ui = {
     view: "inventory",
     selectedBoxId: null,
@@ -448,7 +450,22 @@
       '<div class="field"><label>Email</label><input id="auth-email" type="email" autocomplete="username"></div>' +
       '<div class="field"><label>Password</label><input id="auth-password" type="password" autocomplete="current-password"></div>' +
       '<button class="btn btn-primary btn-block" onclick="handleLogin()">Log in</button>' +
-      '<div class="auth-note">No account? Ask your lab admin to invite you. <a onclick="handleForgotPassword()">Forgot password?</a></div>' +
+      '<div class="auth-note">No account? <a onclick="renderSignupScreen()">Sign up</a> · <a onclick="handleForgotPassword()">Forgot password?</a></div>' +
+      '</div></div>';
+  }
+
+  function renderSignupScreen(errMsg){
+    var root = document.getElementById("auth-root");
+    root.innerHTML =
+      '<div class="auth-screen"><div class="auth-card">' +
+      '<div class="brand-mark">🧊 Cryostock</div>' +
+      '<div class="sub">Create your account</div>' +
+      '<div class="auth-error' + (errMsg ? " show" : "") + '">' + esc(errMsg||"") + '</div>' +
+      '<div class="field"><label>Your name</label><input id="signup-name" type="text" autocomplete="name"></div>' +
+      '<div class="field"><label>Email</label><input id="signup-email" type="email" autocomplete="username"></div>' +
+      '<div class="field"><label>Password</label><input id="signup-password" type="password" autocomplete="new-password"></div>' +
+      '<button class="btn btn-primary btn-block" onclick="handleSignup()">Create account</button>' +
+      '<div class="auth-note">Your account will need to be approved by a lab admin before you can access the inventory. <a onclick="renderAuthScreen()">Already have an account? Log in</a></div>' +
       '</div></div>';
   }
 
@@ -460,6 +477,21 @@
     if(btn){ btn.disabled = true; btn.textContent = "Signing in…"; }
     var res = await supabase.auth.signInWithPassword({email:email, password:password});
     if(res.error){ renderAuthScreen(res.error.message); }
+  }
+
+  async function handleSignup(){
+    var name = document.getElementById("signup-name").value.trim();
+    var email = document.getElementById("signup-email").value.trim();
+    var password = document.getElementById("signup-password").value;
+    if(!email || !password){ renderSignupScreen("Enter your email and password."); return; }
+    if(password.length < 8){ renderSignupScreen("Password must be at least 8 characters."); return; }
+    var res = await supabase.auth.signUp({email:email, password:password, options:{data:{display_name: name || undefined}}});
+    if(res.error){ renderSignupScreen(res.error.message); return; }
+    if(!res.data.session){
+      renderAuthScreen("Account created — check your email to confirm it, then log in.");
+    }
+    // if a session came back immediately, onAuthStateChange fires SIGNED_IN and
+    // handleAuthed() takes it from there (showing the pending-approval screen).
   }
 
   async function handleForgotPassword(){
@@ -550,12 +582,44 @@
   async function bootApp(){
     document.getElementById("auth-root").innerHTML = "";
     document.getElementById("app-shell").hidden = false;
-    document.getElementById("who-am-i").textContent = (session.user.user_metadata && session.user.user_metadata.display_name) || session.user.email;
+    document.getElementById("who-am-i").textContent =
+      ((myProfile && myProfile.display_name) || session.user.email) + (myProfile && myProfile.is_admin ? " (admin)" : "");
     await loadProfiles();
+    await loadPendingProfiles();
     await loadData();
     state.tanks.forEach(function(t){ ui.expandedTanks[t.id] = true; });
     renderAll();
     subscribeRealtime();
+  }
+
+  async function loadMyProfile(){
+    var res = await supabase.from("profiles").select("id, display_name, approved, is_admin").eq("id", session.user.id).single();
+    myProfile = res.data || null;
+    return myProfile;
+  }
+
+  async function loadPendingProfiles(){
+    if(!myProfile || !myProfile.is_admin){ pendingProfiles = []; return; }
+    var res = await supabase.from("profiles").select("id, display_name, created_at").eq("approved", false).order("created_at");
+    pendingProfiles = res.data || [];
+  }
+
+  async function approveProfile(id){
+    await withSaving(function(){ return supabase.from("profiles").update({approved:true}).eq("id", id); });
+    await loadPendingProfiles();
+    renderMain();
+  }
+
+  function renderPendingApprovalScreen(){
+    var root = document.getElementById("auth-root");
+    var name = (myProfile && myProfile.display_name) || session.user.email;
+    root.innerHTML =
+      '<div class="auth-screen"><div class="auth-card">' +
+      '<div class="brand-mark">🧊 Cryostock</div>' +
+      '<div class="sub">Hi ' + esc(name) + ' — your account is waiting for approval</div>' +
+      '<p style="color:var(--text-muted); font-size:13px; margin:0;">Ask your lab admin to approve your account from Cryostock. You\'ll get in automatically once they do — no need to sign up again.</p>' +
+      '<button class="btn btn-block" onclick="handleLogout()">Log out</button>' +
+      '</div></div>';
   }
 
   function parseAuthHash(){
@@ -603,13 +667,19 @@
     });
   }
 
-  function handleAuthed(){
+  async function handleAuthed(){
     if(needsPasswordSetup){
       clearAuthHash();
       renderSetPasswordScreen();
       return;
     }
     clearAuthHash();
+    await loadMyProfile();
+    if(!myProfile || !myProfile.approved){
+      document.getElementById("app-shell").hidden = true;
+      renderPendingApprovalScreen();
+      return;
+    }
     document.getElementById("auth-root").innerHTML = "";
     bootApp();
   }
@@ -808,9 +878,24 @@
     return html;
   }
 
+  function renderPendingApprovalsBanner(){
+    if(!pendingProfiles.length) return "";
+    var html = '<div class="section-title" style="margin-top:0">Pending approval ('+pendingProfiles.length+')</div><div class="recent-list" style="margin-bottom:26px">';
+    pendingProfiles.forEach(function(p){
+      html += '<div class="recent-row" style="cursor:default">' +
+        '<span class="cell-line">'+esc(p.display_name)+'</span>' +
+        '<span class="when" style="margin-right:10px">'+fmtDate(p.created_at)+'</span>' +
+        '<button class="btn btn-primary btn-sm" onclick="approveProfile(\''+p.id+'\')">Approve</button>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
   function renderDashboard(){
+    var banner = renderPendingApprovalsBanner();
     if(state.tanks.length === 0){
-      return '<div class="empty-state">' +
+      return banner + '<div class="empty-state">' +
         '<h2>No tanks yet</h2>' +
         '<p>Create your first liquid nitrogen tank, then add racks and cryoboxes to start tracking your samples.</p>' +
         '<button class="btn btn-primary" onclick="openAddModal(\'tank\')">+ Create a tank</button>' +
@@ -825,7 +910,7 @@
       });
     });
 
-    var html = '<div class="dash-head"><h1>Overview</h1></div>';
+    var html = banner + '<div class="dash-head"><h1>Overview</h1></div>';
     html += '<div class="stat-strip">';
     html += statPill(state.tanks.length, "Tanks");
     html += statPill(totalRacks, "Racks");
@@ -1231,6 +1316,8 @@
   }
 
   window.handleLogin=handleLogin; window.handleForgotPassword=handleForgotPassword; window.handleLogout=handleLogout;
+  window.renderAuthScreen=renderAuthScreen; window.renderSignupScreen=renderSignupScreen; window.handleSignup=handleSignup;
+  window.approveProfile=approveProfile;
   window.handleSetPassword=handleSetPassword;
   window.openChangePasswordModal=openChangePasswordModal; window.submitChangePassword=submitChangePassword;
   window.setView=setView;
