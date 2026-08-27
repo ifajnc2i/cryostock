@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cryostock</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root{
+    --bg:#F3F6F9; --surface:#FFFFFF; --surface-2:#E7ECF1; --surface-3:#DCE3EA;
+    --border:#D2DAE2; --text:#101923; --text-muted:#57677A; --text-faint:#8B99A8;
+    --accent:#2563A6; --accent-strong:#163F6B; --accent-soft:#DCEAF7; --cyan:#0891B2;
+    --danger:#B3261E; --danger-soft:#FBE7E5; --success:#1E8A5F;
+    --shadow:0 8px 24px rgba(16,25,35,0.12);
+    --type-tumor:#C2760C; --type-cart:#7C3AED; --type-nk:#0F9D74; --type-primary:#C2417B; --type-other:#64748B;
+    --font-display:'Archivo','Arial Narrow',sans-serif;
+    --font-body:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+    --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A121C; --surface:#101B29; --surface-2:#16273A; --surface-3:#1D3049;
+      --border:#24384F; --text:#E7EEF5; --text-muted:#8FA3B8; --text-faint:#607488;
+      --accent:#5B9FDD; --accent-strong:#8FC1EE; --accent-soft:#17324A; --cyan:#22D3EE;
+      --danger:#E5766B; --danger-soft:#3A1E1D; --success:#3FCB93;
+      --shadow:0 8px 28px rgba(0,0,0,0.45);
+      --type-tumor:#E0983A; --type-cart:#A78BFA; --type-nk:#34D399; --type-primary:#E8709F; --type-other:#94A3B8;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A121C; --surface:#101B29; --surface-2:#16273A; --surface-3:#1D3049;
+    --border:#24384F; --text:#E7EEF5; --text-muted:#8FA3B8; --text-faint:#607488;
+    --accent:#5B9FDD; --accent-strong:#8FC1EE; --accent-soft:#17324A; --cyan:#22D3EE;
+    --danger:#E5766B; --danger-soft:#3A1E1D; --success:#3FCB93;
+    --shadow:0 8px 28px rgba(0,0,0,0.45);
+    --type-tumor:#E0983A; --type-cart:#A78BFA; --type-nk:#34D399; --type-primary:#E8709F; --type-other:#94A3B8;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--font-body);
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent-soft);}
+  button, input, select, textarea{font-family:inherit; font-size:inherit; color:inherit;}
+  button{cursor:pointer;}
+  a{color:var(--accent);}
+  :focus-visible{outline:2px solid var(--cyan); outline-offset:2px;}
+  h1,h2,h3{font-family:var(--font-display); font-weight:700; text-wrap:balance; margin:0;}
+  .mono{font-family:var(--font-mono);}
+  .tabular{font-variant-numeric:tabular-nums;}
+
+  .app-shell{display:flex; flex-direction:column; height:100vh; min-height:560px;}
+
+  /* ---------- config notice ---------- */
+  .config-notice{
+    max-width:520px; margin:80px auto; padding:28px; background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; box-shadow:var(--shadow);
+  }
+  .config-notice h1{font-size:19px; margin-bottom:10px;}
+  .config-notice p{color:var(--text-muted); margin:0 0 10px;}
+  .config-notice code{
+    display:block; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
+    padding:10px 12px; font-family:var(--font-mono); font-size:12.5px; margin:10px 0; overflow-x:auto;
+  }
+
+  /* ---------- auth screen ---------- */
+  .auth-screen{
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .auth-card{
+    width:360px; max-width:100%; background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:28px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:14px;
+  }
+  .auth-card .brand-mark{font-family:var(--font-display); font-weight:700; font-size:21px; display:flex; align-items:center; gap:8px;}
+  .auth-card .sub{color:var(--text-muted); font-size:12.5px; margin-top:-6px;}
+  .auth-error{
+    background:var(--danger-soft); color:var(--danger); font-size:12.5px; padding:8px 10px; border-radius:6px; display:none;
+  }
+  .auth-error.show{display:block;}
+  .auth-note{font-size:12px; color:var(--text-faint); text-align:center; margin-top:4px;}
+  .auth-note a{cursor:pointer;}
+
+  /* ---------- topbar ---------- */
+  .topbar{
+    display:flex; align-items:center; gap:16px; padding:0 18px; height:58px; flex:0 0 auto;
+    background:var(--surface); border-bottom:1px solid var(--border);
+  }
+  .brand{display:flex; align-items:baseline; gap:8px; flex:0 0 auto;}
+  .brand .mark{font-family:var(--font-display); font-weight:700; font-size:19px; letter-spacing:-0.01em;}
+  .brand .tagline{font-size:11.5px; color:var(--text-faint); display:none;}
+  @media (min-width:900px){ .brand .tagline{display:inline;} }
+  .search-wrap{flex:1 1 auto; max-width:460px; position:relative;}
+  .search-wrap input{
+    width:100%; padding:8px 12px 8px 32px; border-radius:7px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text);
+  }
+  .search-wrap input:focus{background:var(--surface); border-color:var(--accent);}
+  .search-wrap svg{position:absolute; left:9px; top:50%; transform:translateY(-50%); opacity:0.5; pointer-events:none;}
+  .nav-tabs{display:flex; gap:2px; flex:0 0 auto;}
+  .nav-tab{padding:7px 12px; border-radius:6px; font-weight:500; color:var(--text-muted); background:transparent; border:1px solid transparent;}
+  .nav-tab:hover{background:var(--surface-2);}
+  .nav-tab.active{background:var(--accent-soft); color:var(--accent-strong);}
+  .topbar-right{display:flex; align-items:center; gap:10px; margin-left:auto; flex:0 0 auto;}
+  .account-chip{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-muted);}
+  .account-chip .who{font-weight:600; color:var(--text);}
+  .btn{
+    padding:7px 13px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2);
+    font-weight:500; white-space:nowrap;
+  }
+  .btn:hover{background:var(--surface-3);}
+  .btn:disabled{opacity:0.45; cursor:not-allowed;}
+  .btn-primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn-primary:hover{background:var(--accent-strong); border-color:var(--accent-strong);}
+  .btn-danger{background:transparent; border-color:var(--danger); color:var(--danger);}
+  .btn-danger:hover{background:var(--danger-soft);}
+  .btn-block{width:100%;}
+  #save-status{font-size:12px; color:var(--text-faint); min-width:70px; text-align:right;}
+  #save-status.saving{color:var(--cyan);}
+  #save-status.err{color:var(--danger);}
+
+  /* ---------- body ---------- */
+  .body-shell{display:flex; flex:1 1 auto; min-height:0;}
+  .sidebar{
+    width:270px; flex:0 0 auto; border-right:1px solid var(--border); background:var(--surface);
+    overflow-y:auto; padding:12px 10px 90px;
+  }
+  @media (max-width:760px){ .sidebar{width:210px;} }
+  .tree-node{margin-bottom:2px;}
+  .tree-row{
+    display:flex; align-items:center; gap:6px; padding:6px 7px; border-radius:6px; cursor:pointer;
+  }
+  .tree-row:hover{background:var(--surface-2);}
+  .tree-row.active{background:var(--accent-soft);}
+  .tree-row .chev{width:14px; flex:0 0 auto; opacity:0.55; transition:transform .12s;}
+  .tree-row.open .chev{transform:rotate(90deg);}
+  .tree-row .name{flex:1 1 auto; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .tree-row.tank .name{font-family:var(--font-display); font-weight:600;}
+  .tree-row .count{font-size:11px; color:var(--text-faint); font-family:var(--font-mono); flex:0 0 auto;}
+  .tree-children{margin-left:16px; border-left:1px dashed var(--border); padding-left:6px;}
+  .tree-add{
+    display:flex; align-items:center; gap:6px; padding:5px 7px; margin-left:16px; border-radius:6px;
+    color:var(--text-faint); font-size:12.5px; cursor:pointer;
+  }
+  .tree-add:hover{background:var(--surface-2); color:var(--accent);}
+  .sidebar-foot{margin-top:10px;}
+  .row-actions{display:none; gap:2px; flex:0 0 auto;}
+  .tree-row:hover .row-actions{display:flex;}
+  .icon-btn{
+    width:20px; height:20px; display:flex; align-items:center; justify-content:center; border-radius:4px;
+    color:var(--text-faint); background:transparent; border:none;
+  }
+  .icon-btn:hover{background:var(--surface-3); color:var(--text);}
+  .icon-btn.danger:hover{color:var(--danger);}
+
+  .main{flex:1 1 auto; overflow-y:auto; padding:26px 30px 60px;}
+  .empty-state{
+    display:flex; flex-direction:column; align-items:flex-start; gap:12px; max-width:440px; margin-top:40px;
+  }
+  .empty-state h2{font-size:21px;}
+  .empty-state p{color:var(--text-muted); margin:0;}
+
+  /* dashboard */
+  .dash-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:20px; gap:12px; flex-wrap:wrap;}
+  .dash-head h1{font-size:23px;}
+  .stat-strip{display:flex; gap:10px; flex-wrap:wrap;}
+  .stat-pill{
+    background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 14px;
+    display:flex; flex-direction:column; gap:2px; min-width:92px;
+  }
+  .stat-pill .n{font-family:var(--font-mono); font-size:19px; font-weight:500;}
+  .stat-pill .l{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.04em;}
+  .tank-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; margin-top:18px;}
+  .tank-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; cursor:pointer;
+    transition:border-color .12s, box-shadow .12s;
+  }
+  .tank-card:hover{border-color:var(--accent); box-shadow:var(--shadow);}
+  .tank-card h3{font-size:16px; margin-bottom:8px;}
+  .tank-card .meta{font-size:12.5px; color:var(--text-muted); display:flex; flex-direction:column; gap:3px;}
+  .occ-bar{height:5px; border-radius:3px; background:var(--surface-3); overflow:hidden; margin-top:10px;}
+  .occ-bar > div{height:100%; background:var(--accent);}
+  .section-title{
+    font-family:var(--font-display); font-size:13px; text-transform:uppercase; letter-spacing:0.05em;
+    color:var(--text-faint); margin:30px 0 12px;
+  }
+  .recent-list{display:flex; flex-direction:column; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface);}
+  .recent-row{
+    display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--border); cursor:pointer;
+  }
+  .recent-row:last-child{border-bottom:none;}
+  .recent-row:hover{background:var(--surface-2);}
+  .type-dot{width:9px; height:9px; border-radius:50%; flex:0 0 auto;}
+  .recent-row .cell-line{font-weight:500; flex:1 1 auto; min-width:120px;}
+  .recent-row .breadcrumb{font-size:12px; color:var(--text-faint); font-family:var(--font-mono);}
+  .recent-row .when{font-size:11.5px; color:var(--text-faint); flex:0 0 auto;}
+
+  /* activity log */
+  .log-row{display:flex; flex-direction:column; gap:2px; padding:11px 14px; border-bottom:1px solid var(--border);}
+  .log-row:last-child{border-bottom:none;}
+  .log-row .line{font-size:13px;}
+  .log-row .who{font-weight:600;}
+  .log-row .when{font-size:11.5px; color:var(--text-faint); font-family:var(--font-mono);}
+  .log-action{display:inline-block; font-size:10.5px; text-transform:uppercase; letter-spacing:0.04em; padding:1px 6px; border-radius:4px; margin-right:6px;}
+  .log-action.insert{background:var(--success); color:#fff;}
+  .log-action.update{background:var(--accent); color:#fff;}
+  .log-action.delete{background:var(--danger); color:#fff;}
+
+  /* box view */
+  .box-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:6px; flex-wrap:wrap;}
+  .breadcrumb-trail{font-size:12.5px; color:var(--text-faint); margin-bottom:4px;}
+  .breadcrumb-trail span:last-child{color:var(--text);}
+  .box-head h1{font-size:22px;}
+  .box-sub{font-size:12.5px; color:var(--text-muted); font-family:var(--font-mono); margin-top:3px;}
+  .legend{display:flex; gap:12px; flex-wrap:wrap; margin:16px 0 20px;}
+  .legend-item{display:flex; align-items:center; gap:5px; font-size:12px; color:var(--text-muted);}
+  .legend-swatch{width:11px; height:11px; border-radius:3px;}
+  .grid-scroll{overflow:auto; padding-bottom:10px;}
+  .cryo-grid{display:inline-grid; gap:3px;}
+  .grid-label{
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:11px;
+    color:var(--text-faint);
+  }
+  .cell{
+    width:34px; height:34px; border-radius:5px; border:1px solid var(--border); background:var(--surface-2);
+    display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:9.5px;
+    color:var(--text-faint); position:relative;
+  }
+  .cell.empty{border-style:dashed;}
+  .cell.empty:hover{background:var(--surface-3); color:var(--accent); border-color:var(--accent);}
+  .cell.filled{border-style:solid; color:#fff; font-weight:500;}
+  .cell.filled:hover{filter:brightness(1.08); box-shadow:var(--shadow);}
+  .cell.highlight{outline:2px solid var(--cyan); outline-offset:2px;}
+  .myco-badge{position:absolute; bottom:-2px; right:-2px; width:9px; height:9px; border-radius:50%; border:1.5px solid var(--surface);}
+  .myco-badge.negative{background:var(--success);}
+  .legend-swatch.myco-negative{border-radius:50%; background:var(--success);}
+
+  /* slide-over panel */
+  .panel-overlay{
+    position:fixed; inset:0; background:rgba(10,16,24,0.32); display:flex; justify-content:flex-end; z-index:40;
+  }
+  .panel{
+    width:380px; max-width:92vw; background:var(--surface); height:100%; box-shadow:var(--shadow);
+    overflow-y:auto; padding:22px 22px 30px; display:flex; flex-direction:column; gap:14px;
+  }
+  .panel-head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .panel-head h2{font-size:18px;}
+  .panel-head .pos-tag{
+    font-family:var(--font-mono); font-size:12px; color:var(--accent); background:var(--accent-soft);
+    padding:2px 8px; border-radius:5px; display:inline-block; margin-top:4px;
+  }
+  .field{display:flex; flex-direction:column; gap:5px;}
+  .field label{font-size:11.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.04em;}
+  .field input, .field select, .field textarea{
+    padding:8px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface-2); width:100%;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{background:var(--surface); border-color:var(--accent);}
+  .field textarea{resize:vertical; min-height:56px;}
+  .field-row{display:flex; gap:10px;}
+  .field-row .field{flex:1 1 0;}
+  .panel-meta{font-size:11.5px; color:var(--text-faint); border-top:1px solid var(--border); padding-top:10px;}
+  .panel-actions{display:flex; gap:8px; margin-top:6px;}
+  .panel-actions .btn{flex:1 1 auto;}
+
+  /* modal */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(10,16,24,0.4); display:flex; align-items:center; justify-content:center; z-index:50;
+  }
+  .modal{
+    width:340px; max-width:90vw; background:var(--surface); border-radius:12px; box-shadow:var(--shadow);
+    padding:22px; display:flex; flex-direction:column; gap:14px;
+  }
+  .modal h2{font-size:17px;}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:4px;}
+
+  /* search results */
+  .search-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px;}
+  .search-head h1{font-size:20px;}
+  .no-results{color:var(--text-faint); margin-top:24px;}
+
+  @media (max-width:760px){
+    .body-shell{flex-direction:column;}
+    .sidebar{width:100%; max-height:180px; border-right:none; border-bottom:1px solid var(--border);}
+    .main{padding:18px 16px 50px;}
+    .nav-tabs{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div id="config-root"></div>
+<div id="auth-root"></div>
+
+<div class="app-shell" id="app-shell" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">🧊 Cryostock</span>
+      <span class="tagline">Cell inventory — liquid nitrogen storage</span>
+    </div>
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.6" y2="16.6"/></svg>
+      <input id="search-input" type="text" placeholder="Search cell line, owner, note…" oninput="onSearchInput(event)" autocomplete="off">
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab" id="tab-inventory" onclick="setView('inventory')">Inventory</button>
+      <button class="nav-tab" id="tab-activity" onclick="setView('activity')">Activity log</button>
+    </div>
+    <div class="topbar-right">
+      <span id="save-status"></span>
+      <button class="btn" id="export-btn" onclick="exportCSV()">Export CSV</button>
+      <div class="account-chip"><span class="who" id="who-am-i"></span></div>
+      <button class="btn" onclick="openChangePasswordModal()">Change password</button>
+      <button class="btn" onclick="handleLogout()">Log out</button>
+    </div>
+  </header>
+  <div class="body-shell">
+    <nav id="sidebar" class="sidebar"></nav>
+    <main id="main" class="main"></main>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="panel-root"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ======================================================================
+  // FILL THESE IN after creating your Supabase project (see README.md)
+  // ======================================================================
+  const SUPABASE_URL = "https://chulhbyfuirijxmmbxzb.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_LQ9IOn37ZZQQLRNLznsvBw_J46MV184";
+  // ======================================================================
+
+  var TYPES = {
+    tumor:   {label:"Tumor line",       cssVar:"--type-tumor"},
+    cart:    {label:"CAR-T",            cssVar:"--type-cart"},
+    nk:      {label:"NK cells",         cssVar:"--type-nk"},
+    primary: {label:"Primary / PBMC",   cssVar:"--type-primary"},
+    other:   {label:"Other",            cssVar:"--type-other"}
+  };
+  var TYPE_ORDER = ["tumor","cart","nk","primary","other"];
+
+  var configured = SUPABASE_URL.indexOf("YOUR_SUPABASE") !== 0 ? true : false;
+  if(!configured){
+    document.getElementById("config-root").innerHTML =
+      '<div class="config-notice"><h1>Cryostock needs to be connected to Supabase</h1>' +
+      '<p>Open <code>index.html</code> and replace the two placeholder values near the top of the script with your Supabase project URL and anon public key:</p>' +
+      '<code>const SUPABASE_URL = "https://xxxxx.supabase.co";\nconst SUPABASE_ANON_KEY = "eyJ...";</code>' +
+      '<p>Both values are safe to keep in the client-side code — see README.md for the full setup steps.</p></div>';
+    return;
+  }
+
+  var supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  var state = { tanks: [] };
+  var profilesById = {};
+  var auditRows = [];
+  var session = null;
+  var ui = {
+    view: "inventory",
+    selectedBoxId: null,
+    searchQuery: "",
+    expandedTanks: {},
+    expandedRacks: {},
+    editingPos: null,
+    addModal: null,
+    highlightPos: null,
+    saving: false,
+    saveError: null
+  };
+  var realtimeChannel = null;
+
+  // ---------- utils ----------
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function rowLabel(n){
+    var s = "";
+    while(n > 0){ var m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = Math.floor((n-1)/26); }
+    return s;
+  }
+  function fmtDate(iso){
+    if(!iso) return "—";
+    var d = new Date(iso);
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString("en-US", {day:"2-digit", month:"short", year:"numeric"});
+  }
+  function fmtDateTime(iso){
+    if(!iso) return "—";
+    var d = new Date(iso);
+    if(isNaN(d)) return "—";
+    return d.toLocaleDateString("en-US",{day:"2-digit",month:"short",year:"numeric"}) + " at " +
+           d.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
+  }
+  function timeAgo(iso){
+    if(!iso) return "—";
+    var s = Math.floor((Date.now() - new Date(iso).getTime())/1000);
+    if(s < 60) return "just now";
+    if(s < 3600) return Math.floor(s/60) + "m ago";
+    if(s < 86400) return Math.floor(s/3600) + "h ago";
+    return Math.floor(s/86400) + "d ago";
+  }
+  function boxOccupied(box){ return Object.keys(box.vials||{}).length; }
+  function boxTotal(box){ return box.rows * box.cols; }
+  function profileName(uid){ return (profilesById[uid] && profilesById[uid].display_name) || "—"; }
+
+  function locateBox(boxId){
+    for(var t=0;t<state.tanks.length;t++){
+      var tank = state.tanks[t];
+      for(var r=0;r<tank.racks.length;r++){
+        var rack = tank.racks[r];
+        for(var b=0;b<rack.boxes.length;b++){
+          if(rack.boxes[b].id === boxId) return {tank:tank, rack:rack, box:rack.boxes[b]};
+        }
+      }
+    }
+    return null;
+  }
+
+  function allVialsFlat(){
+    var out = [];
+    state.tanks.forEach(function(tank){
+      tank.racks.forEach(function(rack){
+        rack.boxes.forEach(function(box){
+          Object.keys(box.vials||{}).forEach(function(pos){
+            out.push({tank:tank, rack:rack, box:box, pos:pos, vial:box.vials[pos]});
+          });
+        });
+      });
+    });
+    return out;
+  }
+
+  // ---------- auth ----------
+  function renderAuthScreen(errMsg){
+    var root = document.getElementById("auth-root");
+    root.innerHTML =
+      '<div class="auth-screen"><div class="auth-card">' +
+      '<div class="brand-mark">🧊 Cryostock</div>' +
+      '<div class="sub">Sign in with your lab account</div>' +
+      '<div class="auth-error' + (errMsg ? " show" : "") + '" id="auth-error">' + esc(errMsg||"") + '</div>' +
+      '<div class="field"><label>Email</label><input id="auth-email" type="email" autocomplete="username"></div>' +
+      '<div class="field"><label>Password</label><input id="auth-password" type="password" autocomplete="current-password"></div>' +
+      '<button class="btn btn-primary btn-block" onclick="handleLogin()">Log in</button>' +
+      '<div class="auth-note">No account? Ask your lab admin to invite you. <a onclick="handleForgotPassword()">Forgot password?</a></div>' +
+      '</div></div>';
+  }
+
+  async function handleLogin(){
+    var email = document.getElementById("auth-email").value.trim();
+    var password = document.getElementById("auth-password").value;
+    if(!email || !password){ renderAuthScreen("Enter your email and password."); return; }
+    var btn = document.querySelector(".auth-card .btn-primary");
+    if(btn){ btn.disabled = true; btn.textContent = "Signing in…"; }
+    var res = await supabase.auth.signInWithPassword({email:email, password:password});
+    if(res.error){ renderAuthScreen(res.error.message); }
+  }
+
+  async function handleForgotPassword(){
+    var email = document.getElementById("auth-email").value.trim();
+    if(!email){ renderAuthScreen("Type your email above first, then click \"Forgot password?\" again."); return; }
+    var res = await supabase.auth.resetPasswordForEmail(email, {redirectTo: window.location.href});
+    renderAuthScreen(res.error ? res.error.message : "Password reset email sent — check your inbox.");
+  }
+
+  async function handleLogout(){
+    await supabase.auth.signOut();
+  }
+
+  // ---------- data loading ----------
+  async function loadProfiles(){
+    var res = await supabase.from("profiles").select("id, display_name");
+    profilesById = {};
+    (res.data||[]).forEach(function(p){ profilesById[p.id] = p; });
+  }
+
+  async function loadData(){
+    var res = await supabase.from("tanks").select(
+      "id, name, racks ( id, name, boxes ( id, name, rows, cols, samples ( id, position, cell_line, type, passage, freeze_date, count, medium, myco, clone, viability, owner, notes, created_at, created_by, updated_by ) ) )"
+    ).order("name");
+    if(res.error){ ui.saveError = res.error.message; renderSaveStatus(); return; }
+    state.tanks = (res.data||[]).map(function(t){
+      return {
+        id: t.id, name: t.name,
+        racks: (t.racks||[]).map(function(r){
+          return {
+            id: r.id, name: r.name,
+            boxes: (r.boxes||[]).map(function(b){
+              var vials = {};
+              (b.samples||[]).forEach(function(s){
+                vials[s.position] = {
+                  cellLine: s.cell_line, type: s.type, passage: s.passage||"",
+                  freezeDate: s.freeze_date||"", count: s.count||"", medium: s.medium||"",
+                  myco: s.myco||"", clone: s.clone||"", viability: s.viability||"",
+                  owner: s.owner||"", notes: s.notes||"",
+                  addedAt: s.created_at, addedBy: profileName(s.created_by),
+                  updatedBy: profileName(s.updated_by)
+                };
+              });
+              return {id:b.id, name:b.name, rows:b.rows, cols:b.cols, vials:vials};
+            })
+          };
+        })
+      };
+    });
+  }
+
+  async function loadAuditLog(){
+    var res = await supabase.from("audit_log").select("*").order("changed_at", {ascending:false}).limit(100);
+    auditRows = res.data || [];
+  }
+
+  function describeAudit(row){
+    var d = row.new_data || row.old_data || {};
+    if(row.table_name === "samples"){
+      var subject = d.cell_line ? ('"' + d.cell_line + '"') : "a sample";
+      if(row.action === "insert") return "added " + subject;
+      if(row.action === "delete") return "deleted " + subject;
+      return "edited " + subject;
+    }
+    var kind = row.table_name === "tanks" ? "tank" : row.table_name === "racks" ? "rack" : "box";
+    var name = d.name ? ('"' + d.name + '"') : "a " + kind;
+    if(row.action === "insert") return "created " + kind + " " + name;
+    if(row.action === "delete") return "deleted " + kind + " " + name;
+    return "edited " + kind + " " + name;
+  }
+
+  // ---------- realtime ----------
+  function subscribeRealtime(){
+    if(realtimeChannel) return;
+    realtimeChannel = supabase.channel("cryostock-live")
+      .on("postgres_changes", {event:"*", schema:"public", table:"tanks"}, refreshInventory)
+      .on("postgres_changes", {event:"*", schema:"public", table:"racks"}, refreshInventory)
+      .on("postgres_changes", {event:"*", schema:"public", table:"boxes"}, refreshInventory)
+      .on("postgres_changes", {event:"*", schema:"public", table:"samples"}, refreshInventory)
+      .subscribe();
+  }
+  async function refreshInventory(){
+    await loadData();
+    renderSidebar(); renderMain(); renderPanel();
+  }
+
+  // ---------- app boot ----------
+  async function bootApp(){
+    document.getElementById("auth-root").innerHTML = "";
+    document.getElementById("app-shell").hidden = false;
+    document.getElementById("who-am-i").textContent = (session.user.user_metadata && session.user.user_metadata.display_name) || session.user.email;
+    await loadProfiles();
+    await loadData();
+    state.tanks.forEach(function(t){ ui.expandedTanks[t.id] = true; });
+    renderAll();
+    subscribeRealtime();
+  }
+
+  function parseAuthHash(){
+    var hash = window.location.hash;
+    if(!hash || hash.length < 2) return {};
+    var params = new URLSearchParams(hash.slice(1));
+    var obj = {};
+    params.forEach(function(v,k){ obj[k]=v; });
+    return obj;
+  }
+  function clearAuthHash(){
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+
+  var needsPasswordSetup = false;
+
+  async function initAuth(){
+    var hashParams = parseAuthHash();
+
+    if(hashParams.error){
+      var msg = hashParams.error_code === "otp_expired"
+        ? "This invite/reset link has expired or was already used. Ask your lab admin to send you a new one."
+        : (hashParams.error_description ? decodeURIComponent(hashParams.error_description.replace(/\+/g," ")) : "This link is invalid.");
+      clearAuthHash();
+      renderAuthScreen(msg);
+      return;
+    }
+
+    if(hashParams.type === "invite" || hashParams.type === "recovery"){
+      needsPasswordSetup = true;
+    }
+
+    var got = await supabase.auth.getSession();
+    session = got.data.session;
+    if(session){ handleAuthed(); } else { renderAuthScreen(); }
+
+    supabase.auth.onAuthStateChange(function(event, sess){
+      session = sess;
+      if(session){ handleAuthed(); }
+      else{
+        document.getElementById("app-shell").hidden = true;
+        if(realtimeChannel){ supabase.removeChannel(realtimeChannel); realtimeChannel = null; }
+        renderAuthScreen();
+      }
+    });
+  }
+
+  function handleAuthed(){
+    if(needsPasswordSetup){
+      clearAuthHash();
+      renderSetPasswordScreen();
+      return;
+    }
+    clearAuthHash();
+    document.getElementById("auth-root").innerHTML = "";
+    bootApp();
+  }
+
+  function renderSetPasswordScreen(errMsg){
+    var root = document.getElementById("auth-root");
+    root.innerHTML =
+      '<div class="auth-screen"><div class="auth-card">' +
+      '<div class="brand-mark">🧊 Cryostock</div>' +
+      '<div class="sub">Welcome — choose a password for your account</div>' +
+      '<div class="auth-error' + (errMsg ? " show" : "") + '">' + esc(errMsg||"") + '</div>' +
+      '<div class="field"><label>New password</label><input id="new-password" type="password" autocomplete="new-password"></div>' +
+      '<div class="field"><label>Confirm password</label><input id="new-password-2" type="password" autocomplete="new-password"></div>' +
+      '<button class="btn btn-primary btn-block" onclick="handleSetPassword()">Set password and continue</button>' +
+      '</div></div>';
+  }
+
+  async function handleSetPassword(){
+    var p1 = document.getElementById("new-password").value;
+    var p2 = document.getElementById("new-password-2").value;
+    if(p1.length < 8){ renderSetPasswordScreen("Password must be at least 8 characters."); return; }
+    if(p1 !== p2){ renderSetPasswordScreen("Passwords don't match."); return; }
+    var res = await supabase.auth.updateUser({password: p1});
+    if(res.error){ renderSetPasswordScreen(res.error.message); return; }
+    needsPasswordSetup = false;
+    document.getElementById("auth-root").innerHTML = "";
+    bootApp();
+  }
+
+  function renderSaveStatus(){
+    var el = document.getElementById("save-status");
+    if(!el) return;
+    el.className = "";
+    if(ui.saving){ el.textContent = "Saving…"; el.className = "saving"; }
+    else if(ui.saveError){ el.textContent = ui.saveError; el.className = "err"; }
+    else{ el.textContent = "Synced"; }
+  }
+
+  async function withSaving(fn){
+    ui.saving = true; ui.saveError = null; renderSaveStatus();
+    try{
+      var res = await fn();
+      if(res && res.error) throw res.error;
+      ui.saving = false; renderSaveStatus();
+      return res;
+    }catch(e){
+      ui.saving = false; ui.saveError = (e && e.message) || "Save failed";
+      renderSaveStatus();
+      alert(ui.saveError);
+      throw e;
+    }
+  }
+
+  // ---------- CRUD ----------
+  async function addTank(name){
+    await withSaving(function(){
+      return supabase.from("tanks").insert({name:name, created_by:session.user.id});
+    });
+    await refreshInventory();
+  }
+  async function addRack(tankId, name){
+    await withSaving(function(){
+      return supabase.from("racks").insert({tank_id:tankId, name:name, created_by:session.user.id});
+    });
+    await refreshInventory();
+  }
+  async function addBox(rackId, name, rows, cols){
+    await withSaving(function(){
+      return supabase.from("boxes").insert({rack_id:rackId, name:name, rows:rows, cols:cols, created_by:session.user.id});
+    });
+    await refreshInventory();
+  }
+  async function removeTank(tankId){
+    await withSaving(function(){ return supabase.from("tanks").delete().eq("id", tankId); });
+    await refreshInventory();
+  }
+  async function removeRack(rackId){
+    await withSaving(function(){ return supabase.from("racks").delete().eq("id", rackId); });
+    await refreshInventory();
+  }
+  async function removeBox(boxId){
+    await withSaving(function(){ return supabase.from("boxes").delete().eq("id", boxId); });
+    await refreshInventory();
+  }
+
+  function openRenameModal(entityType, id, currentName){
+    ui.addModal = {kind:"rename", entityType:entityType, id:id, currentName:currentName};
+    renderModal();
+  }
+  async function submitRename(){
+    var m = ui.addModal;
+    var name = document.getElementById("m-name").value.trim();
+    if(!name){ alert("Name is required."); return; }
+    var table = m.entityType==="tank" ? "tanks" : m.entityType==="rack" ? "racks" : "boxes";
+    closeAddModal();
+    await withSaving(function(){ return supabase.from(table).update({name:name}).eq("id", m.id); });
+    await refreshInventory();
+  }
+
+  // ---------- render root ----------
+  function renderAll(){ renderSidebar(); renderMain(); renderPanel(); renderModal(); renderSaveStatus(); }
+
+  function setView(v){
+    ui.view = v; ui.searchQuery = ""; document.getElementById("search-input").value = "";
+    if(v === "inventory"){ ui.selectedBoxId = null; } // clicking the tab always returns to the overview
+    document.getElementById("tab-inventory").classList.toggle("active", v==="inventory");
+    document.getElementById("tab-activity").classList.toggle("active", v==="activity");
+    renderSidebar();
+    renderMain();
+  }
+
+  function renderSidebar(){
+    var el = document.getElementById("sidebar");
+    if(state.tanks.length === 0){
+      el.innerHTML = '<div class="tree-add" onclick="openAddModal(\'tank\')">+ Add tank</div>';
+      return;
+    }
+    var html = "";
+    state.tanks.forEach(function(tank){
+      var open = !!ui.expandedTanks[tank.id];
+      var occ = 0, tot = 0;
+      tank.racks.forEach(function(r){ r.boxes.forEach(function(b){ occ+=boxOccupied(b); tot+=boxTotal(b); }); });
+      html += '<div class="tree-node">';
+      html += '<div class="tree-row tank ' + (open?"open":"") + '" onclick="toggleTank(\''+tank.id+'\')">';
+      html += '<span class="chev">▶</span><span class="name">'+esc(tank.name)+'</span>';
+      html += '<span class="count">'+occ+'/'+tot+'</span>';
+      html += '<span class="row-actions"><button class="icon-btn" title="Rename tank" onclick="event.stopPropagation();openRenameModal(\'tank\',\''+tank.id+'\',\''+esc(tank.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete tank" onclick="event.stopPropagation();confirmDeleteTank(\''+tank.id+'\')">✕</button></span>';
+      html += '</div>';
+      if(open){
+        html += '<div class="tree-children">';
+        tank.racks.forEach(function(rack){
+          var ropen = !!ui.expandedRacks[rack.id];
+          var rocc=0, rtot=0;
+          rack.boxes.forEach(function(b){ rocc+=boxOccupied(b); rtot+=boxTotal(b); });
+          html += '<div class="tree-node">';
+          html += '<div class="tree-row rack '+(ropen?"open":"")+'" onclick="toggleRack(\''+rack.id+'\')">';
+          html += '<span class="chev">▶</span><span class="name">'+esc(rack.name)+'</span>';
+          html += '<span class="count">'+rocc+'/'+rtot+'</span>';
+          html += '<span class="row-actions"><button class="icon-btn" title="Rename rack" onclick="event.stopPropagation();openRenameModal(\'rack\',\''+rack.id+'\',\''+esc(rack.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete rack" onclick="event.stopPropagation();confirmDeleteRack(\''+rack.id+'\')">✕</button></span>';
+          html += '</div>';
+          if(ropen){
+            html += '<div class="tree-children">';
+            rack.boxes.forEach(function(box){
+              var active = ui.selectedBoxId === box.id;
+              html += '<div class="tree-row box '+(active?"active":"")+'" onclick="selectBox(\''+box.id+'\')">';
+              html += '<span class="chev" style="visibility:hidden">▶</span><span class="name">'+esc(box.name)+'</span>';
+              html += '<span class="count">'+boxOccupied(box)+'/'+boxTotal(box)+'</span>';
+              html += '<span class="row-actions"><button class="icon-btn" title="Rename box" onclick="event.stopPropagation();openRenameModal(\'box\',\''+box.id+'\',\''+esc(box.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete box" onclick="event.stopPropagation();confirmDeleteBox(\''+box.id+'\')">✕</button></span>';
+              html += '</div>';
+            });
+            html += '<div class="tree-add" onclick="openAddModal(\'box\',\''+rack.id+'\')">+ Box</div>';
+            html += '</div>';
+          }
+          html += '</div>';
+        });
+        html += '<div class="tree-add" onclick="openAddModal(\'rack\',\''+tank.id+'\')">+ Rack</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+    });
+    html += '<div class="sidebar-foot"><div class="tree-add" onclick="openAddModal(\'tank\')">+ Add tank</div></div>';
+    el.innerHTML = html;
+  }
+
+  function toggleTank(id){ ui.expandedTanks[id] = !ui.expandedTanks[id]; renderSidebar(); }
+  function toggleRack(id){ ui.expandedRacks[id] = !ui.expandedRacks[id]; renderSidebar(); }
+  function selectBox(id){
+    ui.selectedBoxId = id; ui.searchQuery = ""; ui.view = "inventory";
+    document.getElementById("search-input").value = "";
+    renderSidebar(); renderMain();
+  }
+
+  // ---------- main ----------
+  function renderMain(){
+    var main = document.getElementById("main");
+    if(ui.view === "activity"){ main.innerHTML = renderActivityLog(); loadAuditLog().then(function(){ if(ui.view==="activity") main.innerHTML = renderActivityLog(); }); return; }
+    if(ui.searchQuery.trim()){ main.innerHTML = renderSearchResults(); return; }
+    if(ui.selectedBoxId){
+      var loc = locateBox(ui.selectedBoxId);
+      if(loc){ main.innerHTML = renderBoxView(loc); return; }
+      ui.selectedBoxId = null;
+    }
+    main.innerHTML = renderDashboard();
+  }
+
+  function renderActivityLog(){
+    var html = '<div class="search-head"><h1>Activity log</h1></div>';
+    if(!auditRows.length){ html += '<div class="no-results">Loading…</div>'; return html; }
+    html += '<div class="recent-list">';
+    auditRows.forEach(function(row){
+      html += '<div class="log-row"><div class="line"><span class="log-action '+row.action+'">'+row.action+'</span>' +
+        '<span class="who">'+esc(profileName(row.changed_by))+'</span> ' + esc(describeAudit(row)) + '</div>' +
+        '<div class="when">'+fmtDateTime(row.changed_at)+' · '+timeAgo(row.changed_at)+'</div></div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function renderDashboard(){
+    if(state.tanks.length === 0){
+      return '<div class="empty-state">' +
+        '<h2>No tanks yet</h2>' +
+        '<p>Create your first liquid nitrogen tank, then add racks and cryoboxes to start tracking your samples.</p>' +
+        '<button class="btn btn-primary" onclick="openAddModal(\'tank\')">+ Create a tank</button>' +
+        '</div>';
+    }
+    var totalVials=0, totalCap=0, totalBoxes=0, totalRacks=0;
+    state.tanks.forEach(function(t){
+      totalRacks += t.racks.length;
+      t.racks.forEach(function(r){
+        totalBoxes += r.boxes.length;
+        r.boxes.forEach(function(b){ totalVials += boxOccupied(b); totalCap += boxTotal(b); });
+      });
+    });
+
+    var html = '<div class="dash-head"><h1>Overview</h1></div>';
+    html += '<div class="stat-strip">';
+    html += statPill(state.tanks.length, "Tanks");
+    html += statPill(totalRacks, "Racks");
+    html += statPill(totalBoxes, "Boxes");
+    html += statPill(totalVials, "Samples");
+    html += statPill(totalCap ? Math.round(100*totalVials/totalCap)+"%" : "—", "Occupancy");
+    html += '</div>';
+
+    html += '<div class="tank-grid">';
+    state.tanks.forEach(function(tank){
+      var occ=0, tot=0;
+      tank.racks.forEach(function(r){ r.boxes.forEach(function(b){ occ+=boxOccupied(b); tot+=boxTotal(b); }); });
+      var pct = tot ? Math.round(100*occ/tot) : 0;
+      html += '<div class="tank-card" onclick="jumpToFirstBox(\''+tank.id+'\')">';
+      html += '<h3>'+esc(tank.name)+'</h3>';
+      html += '<div class="meta"><span>'+tank.racks.length+' rack(s)</span><span>'+occ+' / '+tot+' positions filled</span></div>';
+      html += '<div class="occ-bar"><div style="width:'+pct+'%"></div></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    var cellLineCounts = computeCellLineCounts();
+    if(cellLineCounts.length){
+      html += '<div class="section-title">Cell lines in stock</div><div class="recent-list">';
+      cellLineCounts.forEach(function(cl){
+        html += '<div class="recent-row" onclick="searchFor(\''+jsEsc(cl.label)+'\')">' +
+          '<span class="cell-line">'+esc(cl.label)+'</span>' +
+          '<span class="when tabular">'+cl.count+' vial'+(cl.count===1?"":"s")+'</span>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+
+    var recent = allVialsFlat().sort(function(a,b){
+      return (b.vial.addedAt||"").localeCompare(a.vial.addedAt||"");
+    }).slice(0,8);
+    if(recent.length){
+      html += '<div class="section-title">Recent additions</div><div class="recent-list">';
+      recent.forEach(function(r){
+        var t = TYPES[r.vial.type] || TYPES.other;
+        html += '<div class="recent-row" onclick="jumpToVial(\''+r.box.id+'\',\''+r.pos+'\')">';
+        html += '<span class="type-dot" style="background:var('+t.cssVar+')"></span>';
+        html += '<span class="cell-line">'+esc(r.vial.cellLine||"(unnamed)")+'</span>';
+        html += '<span class="breadcrumb">'+esc(r.tank.name)+' › '+esc(r.rack.name)+' › '+esc(r.box.name)+' › '+r.pos+'</span>';
+        html += '<span class="when">'+fmtDate(r.vial.addedAt)+'</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    return html;
+  }
+  function statPill(n,l){ return '<div class="stat-pill"><span class="n tabular">'+n+'</span><span class="l">'+l+'</span></div>'; }
+
+  function jumpToFirstBox(tankId){
+    var tank = state.tanks.find(function(t){return t.id===tankId;});
+    if(tank && tank.racks.length && tank.racks[0].boxes.length){
+      ui.expandedTanks[tankId] = true;
+      ui.expandedRacks[tank.racks[0].id] = true;
+      selectBox(tank.racks[0].boxes[0].id);
+    }
+  }
+  function jumpToVial(boxId, pos){
+    var loc = locateBox(boxId);
+    if(!loc) return;
+    ui.expandedTanks[loc.tank.id] = true;
+    ui.expandedRacks[loc.rack.id] = true;
+    ui.searchQuery = ""; document.getElementById("search-input").value = ""; ui.view = "inventory";
+    ui.selectedBoxId = boxId;
+    ui.highlightPos = pos;
+    renderSidebar(); renderMain();
+  }
+
+  function renderBoxView(loc){
+    var tank = loc.tank, rack = loc.rack, box = loc.box;
+    var html = '<div class="breadcrumb-trail">'+esc(tank.name)+' › '+esc(rack.name)+' › <span>'+esc(box.name)+'</span></div>';
+    html += '<div class="box-head"><div><h1>'+esc(box.name)+'</h1>';
+    html += '<div class="box-sub">'+box.rows+' × '+box.cols+' — '+boxOccupied(box)+' / '+boxTotal(box)+' positions filled</div></div></div>';
+
+    html += '<div class="legend">';
+    TYPE_ORDER.forEach(function(k){
+      html += '<div class="legend-item"><span class="legend-swatch" style="background:var('+TYPES[k].cssVar+')"></span>'+TYPES[k].label+'</div>';
+    });
+    html += '<div class="legend-item"><span class="legend-swatch" style="background:var(--surface-2);border:1px dashed var(--border)"></span>Empty</div>';
+    html += '</div>';
+    html += '<div class="legend" style="margin-top:-10px">';
+    html += '<div class="legend-item"><span class="legend-swatch myco-negative"></span>Mycoplasma negative</div>';
+    html += '</div>';
+
+    html += '<div class="grid-scroll"><div class="cryo-grid" style="grid-template-columns:26px repeat('+box.cols+',34px)">';
+    html += '<div class="grid-label"></div>';
+    for(var c=1;c<=box.cols;c++){ html += '<div class="grid-label">'+c+'</div>'; }
+    for(var r=1;r<=box.rows;r++){
+      html += '<div class="grid-label">'+rowLabel(r)+'</div>';
+      for(var c2=1;c2<=box.cols;c2++){
+        var pos = rowLabel(r)+c2;
+        var vial = box.vials[pos];
+        var hl = (ui.highlightPos===pos && ui.selectedBoxId===box.id) ? " highlight" : "";
+        if(vial){
+          var t = TYPES[vial.type] || TYPES.other;
+          var mycoTitle = vial.myco==="negative" ? ", mycoplasma negative" : "";
+          var mycoBadge = vial.myco==="negative" ? '<span class="myco-badge negative"></span>' : "";
+          html += '<button class="cell filled'+hl+'" style="background:var('+t.cssVar+')" title="'+esc(vial.cellLine||"")+' — P'+esc(vial.passage||"?")+mycoTitle+'" onclick="openVialPanel(\''+box.id+'\',\''+pos+'\')">'+pos+mycoBadge+'</button>';
+        }else{
+          html += '<button class="cell empty'+hl+'" title="Empty position" onclick="openVialPanel(\''+box.id+'\',\''+pos+'\')">'+pos+'</button>';
+        }
+      }
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function normalizeSearch(s){
+    return String(s||"").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+  function jsEsc(s){
+    return String(s||"").replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+  }
+
+  // Groups samples by cell line name, treating spelling variants (dashes, spaces,
+  // underscores, case) as the same line — e.g. "PC3-PIP" and "PC3 PIP" count together.
+  function computeCellLineCounts(){
+    var map = {};
+    allVialsFlat().forEach(function(r){
+      var name = (r.vial.cellLine || "").trim() || "(unnamed)";
+      var norm = normalizeSearch(name) || "(unnamed)";
+      if(!map[norm]) map[norm] = {count:0, variants:{}};
+      map[norm].count++;
+      map[norm].variants[name] = (map[norm].variants[name]||0) + 1;
+    });
+    var list = Object.keys(map).map(function(k){
+      var entry = map[k];
+      var bestLabel = Object.keys(entry.variants).sort(function(a,b){
+        return entry.variants[b] - entry.variants[a];
+      })[0];
+      return {label:bestLabel, count:entry.count};
+    });
+    list.sort(function(a,b){ return b.count - a.count || a.label.localeCompare(b.label); });
+    return list;
+  }
+
+  function searchFor(text){
+    ui.searchQuery = text;
+    document.getElementById("search-input").value = text;
+    ui.view = "inventory";
+    renderMain();
+  }
+
+  function renderSearchResults(){
+    var q = normalizeSearch(ui.searchQuery);
+    var results = allVialsFlat().filter(function(r){
+      var v = r.vial;
+      var hay = normalizeSearch([v.cellLine, v.owner, v.notes, v.medium, v.myco, v.clone, (TYPES[v.type]||{}).label, r.tank.name, r.rack.name, r.box.name].join(" "));
+      return hay.indexOf(q) !== -1;
+    });
+    var html = '<div class="search-head"><h1>Results for "'+esc(ui.searchQuery)+'"</h1><span class="section-title" style="margin:0">'+results.length+' sample(s)</span></div>';
+    if(!results.length){
+      html += '<div class="no-results">No samples match this search.</div>';
+      return html;
+    }
+    html += '<div class="recent-list">';
+    results.forEach(function(r){
+      var t = TYPES[r.vial.type] || TYPES.other;
+      html += '<div class="recent-row" onclick="jumpToVial(\''+r.box.id+'\',\''+r.pos+'\')">';
+      html += '<span class="type-dot" style="background:var('+t.cssVar+')"></span>';
+      html += '<span class="cell-line">'+esc(r.vial.cellLine||"(unnamed)")+'</span>';
+      html += '<span class="breadcrumb">'+esc(r.tank.name)+' › '+esc(r.rack.name)+' › '+esc(r.box.name)+' › '+r.pos+'</span>';
+      html += '<span class="when">P'+esc(r.vial.passage||"?")+' · '+esc(r.vial.owner||"—")+'</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function onSearchInput(e){ ui.searchQuery = e.target.value; ui.view = "inventory"; renderMain(); }
+
+  // ---------- vial panel ----------
+  function openVialPanel(boxId, pos){
+    ui.editingPos = {boxId:boxId, pos:pos};
+    ui.highlightPos = pos;
+    renderPanel();
+  }
+  function closeVialPanel(){ ui.editingPos = null; renderPanel(); }
+
+  function renderPanel(){
+    var root = document.getElementById("panel-root");
+    if(!ui.editingPos){ root.innerHTML = ""; return; }
+    var loc = locateBox(ui.editingPos.boxId);
+    if(!loc){ ui.editingPos = null; root.innerHTML = ""; return; }
+    var pos = ui.editingPos.pos;
+    var vial = loc.box.vials[pos];
+    var isNew = !vial;
+    var v = vial || {cellLine:"", type:"tumor", passage:"", freezeDate:"", count:"", medium:"", myco:"", clone:"", viability:"", owner:"", notes:""};
+
+    var typeOptions = TYPE_ORDER.map(function(k){
+      return '<option value="'+k+'"'+(v.type===k?" selected":"")+'>'+TYPES[k].label+'</option>';
+    }).join("");
+
+    var cellLineOptions = computeCellLineCounts().map(function(cl){
+      return '<option value="'+esc(cl.label)+'">';
+    }).join("");
+
+    var html = '<div class="panel-overlay" onclick="if(event.target===this) closeVialPanel()">';
+    html += '<div class="panel">';
+    html += '<div class="panel-head"><div><h2>'+(isNew?"New sample":esc(v.cellLine||"Sample"))+'</h2>';
+    html += '<span class="pos-tag mono">'+esc(loc.box.name)+' · '+pos+'</span></div>';
+    html += '<button class="icon-btn" onclick="closeVialPanel()">✕</button></div>';
+
+    html += '<div class="field"><label>Cell line / sample</label><input id="f-cellLine" type="text" value="'+esc(v.cellLine)+'" list="cell-line-datalist" placeholder="e.g. PC3, LNCaP, NK-92, CAR-T anti-PSMA…" autocomplete="off"></div>';
+    html += '<datalist id="cell-line-datalist">'+cellLineOptions+'</datalist>';
+    html += '<div class="field-row">';
+    html += '<div class="field"><label>Type</label><select id="f-type">'+typeOptions+'</select></div>';
+    html += '<div class="field"><label>Passage</label><input id="f-passage" type="text" value="'+esc(v.passage)+'" placeholder="e.g. P12"></div>';
+    html += '</div>';
+    html += '<div class="field-row">';
+    html += '<div class="field"><label>Clone</label><input id="f-clone" type="text" value="'+esc(v.clone)+'" placeholder="e.g. Clone 4B2"></div>';
+    html += '<div class="field"><label>Viability</label><input id="f-viability" type="text" value="'+esc(v.viability)+'" placeholder="e.g. 92%"></div>';
+    html += '</div>';
+    html += '<div class="field-row">';
+    html += '<div class="field"><label>Freeze date</label><input id="f-freezeDate" type="date" value="'+esc(v.freezeDate)+'"></div>';
+    html += '<div class="field"><label>Count / conc.</label><input id="f-count" type="text" value="'+esc(v.count)+'" placeholder="e.g. 5×10⁶ /mL"></div>';
+    html += '</div>';
+    html += '<div class="field"><label>Cryopreservation medium</label><input id="f-medium" type="text" value="'+esc(v.medium)+'" placeholder="e.g. 90% FBS + 10% DMSO"></div>';
+    html += '<div class="field"><label>Mycoplasma</label><select id="f-myco">'+
+      '<option value=""'+(!v.myco?" selected":"")+'>Not sure (not tested)</option>'+
+      '<option value="negative"'+(v.myco==="negative"?" selected":"")+'>Negative</option>'+
+      '</select></div>';
+    html += '<div class="field"><label>Owner (responsible researcher)</label><input id="f-owner" type="text" value="'+esc(v.owner)+'" placeholder="Researcher name"></div>';
+    html += '<div class="field"><label>Notes</label><textarea id="f-notes" placeholder="construct, donor, karyotype…">'+esc(v.notes)+'</textarea></div>';
+
+    if(!isNew){
+      html += '<div class="panel-meta">Added '+fmtDateTime(v.addedAt)+' by '+esc(v.addedBy)+
+        (v.updatedBy && v.updatedBy!==v.addedBy ? '<br>Last edited by '+esc(v.updatedBy) : '')+'</div>';
+    }
+
+    html += '<div class="panel-actions">';
+    if(!isNew) html += '<button class="btn btn-danger" onclick="deleteVial(\''+loc.box.id+'\',\''+pos+'\')">Delete</button>';
+    html += '<button class="btn btn-primary" onclick="saveVial(\''+loc.box.id+'\',\''+pos+'\')">'+(isNew?"Add":"Save")+'</button>';
+    html += '</div>';
+    html += '</div></div>';
+    root.innerHTML = html;
+  }
+
+  async function saveVial(boxId, pos){
+    var cellLine = document.getElementById("f-cellLine").value.trim();
+    if(!cellLine){ alert("Cell line / sample name is required."); return; }
+    var row = {
+      box_id: boxId,
+      position: pos,
+      cell_line: cellLine,
+      type: document.getElementById("f-type").value,
+      passage: document.getElementById("f-passage").value.trim(),
+      freeze_date: document.getElementById("f-freezeDate").value || null,
+      count: document.getElementById("f-count").value.trim(),
+      medium: document.getElementById("f-medium").value.trim(),
+      myco: document.getElementById("f-myco").value,
+      clone: document.getElementById("f-clone").value.trim(),
+      viability: document.getElementById("f-viability").value.trim(),
+      owner: document.getElementById("f-owner").value.trim(),
+      notes: document.getElementById("f-notes").value.trim()
+    };
+    await withSaving(function(){
+      return supabase.from("samples").upsert(row, {onConflict:"box_id,position"});
+    });
+    ui.editingPos = null;
+    await refreshInventory();
+  }
+
+  async function deleteVial(boxId, pos){
+    if(!confirm("Delete the sample at position "+pos+"?")) return;
+    await withSaving(function(){
+      return supabase.from("samples").delete().eq("box_id", boxId).eq("position", pos);
+    });
+    ui.editingPos = null;
+    await refreshInventory();
+  }
+
+  // ---------- add modals ----------
+  function openAddModal(kind, parentId){
+    if(kind==="tank") ui.addModal = {kind:"tank"};
+    else if(kind==="rack") ui.addModal = {kind:"rack", tankId:parentId};
+    else if(kind==="box") ui.addModal = {kind:"box", rackId:parentId};
+    renderModal();
+  }
+  function closeAddModal(){ ui.addModal = null; renderModal(); }
+
+  function renderModal(){
+    var root = document.getElementById("modal-root");
+    if(!ui.addModal){ root.innerHTML = ""; return; }
+    var m = ui.addModal, html = '<div class="modal-overlay" onclick="if(event.target===this) closeAddModal()"><div class="modal">';
+    if(m.kind==="tank"){
+      html += '<h2>New tank</h2>';
+      html += '<div class="field"><label>Name</label><input id="m-name" type="text" placeholder="e.g. Tank 1 — LN2 room 302" autocomplete="off" autofocus></div>';
+      html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddTank()">Create</button></div>';
+    }else if(m.kind==="rack"){
+      html += '<h2>New rack</h2>';
+      html += '<div class="field"><label>Name</label><input id="m-name" type="text" placeholder="e.g. Rack A" autocomplete="off" autofocus></div>';
+      html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddRack(\''+m.tankId+'\')">Create</button></div>';
+    }else if(m.kind==="box"){
+      html += '<h2>New box</h2>';
+      html += '<div class="field"><label>Name</label><input id="m-name" type="text" placeholder="e.g. Box 3" autocomplete="off" autofocus></div>';
+      html += '<div class="field-row">';
+      html += '<div class="field"><label>Rows</label><input id="m-rows" type="number" min="1" max="30" value="9"></div>';
+      html += '<div class="field"><label>Columns</label><input id="m-cols" type="number" min="1" max="30" value="9"></div>';
+      html += '</div>';
+      html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddBox(\''+m.rackId+'\')">Create</button></div>';
+    }else if(m.kind==="rename"){
+      var typeLabel = m.entityType==="tank"?"tank":m.entityType==="rack"?"rack":"box";
+      html += '<h2>Rename '+typeLabel+'</h2>';
+      html += '<div class="field"><label>Name</label><input id="m-name" type="text" value="'+esc(m.currentName)+'" autocomplete="off" autofocus></div>';
+      html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitRename()">Save</button></div>';
+    }else if(m.kind==="changePassword"){
+      html += '<h2>Change password</h2>';
+      html += '<div class="auth-error' + (m.error ? " show" : "") + '">' + esc(m.error||"") + '</div>';
+      html += '<div class="field"><label>New password</label><input id="cp-new" type="password" autocomplete="new-password" autofocus></div>';
+      html += '<div class="field"><label>Confirm password</label><input id="cp-confirm" type="password" autocomplete="new-password"></div>';
+      html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitChangePassword()">Save</button></div>';
+    }
+    html += '</div></div>';
+    root.innerHTML = html;
+  }
+
+  function openChangePasswordModal(){
+    ui.addModal = {kind:"changePassword"};
+    renderModal();
+  }
+  async function submitChangePassword(){
+    var p1 = document.getElementById("cp-new").value;
+    var p2 = document.getElementById("cp-confirm").value;
+    if(p1.length < 8){ ui.addModal = {kind:"changePassword", error:"Password must be at least 8 characters."}; renderModal(); return; }
+    if(p1 !== p2){ ui.addModal = {kind:"changePassword", error:"Passwords don't match."}; renderModal(); return; }
+    var res = await supabase.auth.updateUser({password: p1});
+    if(res.error){ ui.addModal = {kind:"changePassword", error:res.error.message}; renderModal(); return; }
+    closeAddModal();
+    alert("Password updated.");
+  }
+
+  async function submitAddTank(){
+    var name = document.getElementById("m-name").value.trim();
+    if(!name){ alert("Name is required."); return; }
+    closeAddModal();
+    await addTank(name);
+  }
+  async function submitAddRack(tankId){
+    var name = document.getElementById("m-name").value.trim();
+    if(!name){ alert("Name is required."); return; }
+    ui.expandedTanks[tankId] = true;
+    closeAddModal();
+    await addRack(tankId, name);
+  }
+  async function submitAddBox(rackId){
+    var name = document.getElementById("m-name").value.trim();
+    var rows = parseInt(document.getElementById("m-rows").value,10) || 9;
+    var cols = parseInt(document.getElementById("m-cols").value,10) || 9;
+    if(!name){ alert("Name is required."); return; }
+    rows = Math.max(1, Math.min(30, rows));
+    cols = Math.max(1, Math.min(30, cols));
+    ui.expandedRacks[rackId] = true;
+    closeAddModal();
+    await addBox(rackId, name, rows, cols);
+  }
+
+  // ---------- deletes ----------
+  async function confirmDeleteTank(id){
+    var tank = state.tanks.find(function(t){return t.id===id;});
+    if(!tank) return;
+    if(!confirm('Delete tank "'+tank.name+'" and everything in it (racks, boxes, samples)?')) return;
+    if(ui.selectedBoxId && locateBox(ui.selectedBoxId) && locateBox(ui.selectedBoxId).tank.id===id) ui.selectedBoxId = null;
+    await removeTank(id);
+  }
+  async function confirmDeleteRack(rackId){
+    if(!confirm("Delete this rack and everything in it?")) return;
+    await removeRack(rackId);
+    if(ui.selectedBoxId && !locateBox(ui.selectedBoxId)) { ui.selectedBoxId = null; renderMain(); }
+  }
+  async function confirmDeleteBox(boxId){
+    if(!confirm("Delete this box and all its samples?")) return;
+    if(ui.selectedBoxId === boxId) ui.selectedBoxId = null;
+    await removeBox(boxId);
+  }
+
+  // ---------- export ----------
+  function exportCSV(){
+    var mycoLabel = {negative:"Negative"};
+    var rows = [["Tank","Rack","Box","Position","Cell line","Type","Passage","Clone","Viability","Freeze date","Count","Medium","Mycoplasma","Owner","Notes","Added at","Added by"]];
+    allVialsFlat().forEach(function(r){
+      var v = r.vial;
+      rows.push([r.tank.name, r.rack.name, r.box.name, r.pos, v.cellLine, (TYPES[v.type]||{}).label||v.type,
+        v.passage, v.clone, v.viability, v.freezeDate, v.count, v.medium, mycoLabel[v.myco]||"Not sure (not tested)", v.owner, v.notes, v.addedAt, v.addedBy]);
+    });
+    var csv = rows.map(function(row){
+      return row.map(function(cell){
+        var s = String(cell==null?"":cell);
+        if(/[",\n]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+        return s;
+      }).join(",");
+    }).join("\r\n");
+    var blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "cryostock_export.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  window.handleLogin=handleLogin; window.handleForgotPassword=handleForgotPassword; window.handleLogout=handleLogout;
+  window.handleSetPassword=handleSetPassword;
+  window.openChangePasswordModal=openChangePasswordModal; window.submitChangePassword=submitChangePassword;
+  window.setView=setView;
+  window.toggleTank=toggleTank; window.toggleRack=toggleRack; window.selectBox=selectBox;
+  window.onSearchInput=onSearchInput; window.searchFor=searchFor;
+  window.openVialPanel=openVialPanel; window.closeVialPanel=closeVialPanel;
+  window.saveVial=saveVial; window.deleteVial=deleteVial;
+  window.openAddModal=openAddModal; window.closeAddModal=closeAddModal;
+  window.openRenameModal=openRenameModal; window.submitRename=submitRename;
+  window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
+  window.confirmDeleteTank=confirmDeleteTank; window.confirmDeleteRack=confirmDeleteRack; window.confirmDeleteBox=confirmDeleteBox;
+  window.jumpToFirstBox=jumpToFirstBox; window.jumpToVial=jumpToVial;
+  window.exportCSV=exportCSV;
+
+  initAuth();
+})();
+</script>
+</body>
+</html>
