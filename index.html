@@ -101,6 +101,14 @@
   .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint);}
   .filter-bar a:hover{color:var(--accent);}
   .filter-bar a[hidden]{display:none;}
+  .pick-banner{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 18px;
+    background:var(--accent-soft); border-bottom:1px solid var(--accent); font-size:13px; color:var(--accent-strong);
+  }
+  .pick-banner[hidden]{display:none;}
+  .pick-banner .btn{flex:0 0 auto;}
+  .cell.pickable{border-style:solid; border-color:var(--cyan); background:var(--accent-soft); color:var(--accent-strong); cursor:pointer;}
+  .cell.pickable:hover{background:var(--cyan); color:#fff;}
   .brand{display:flex; align-items:baseline; gap:8px; flex:0 0 auto;}
   .brand .mark{font-family:var(--font-display); font-weight:700; font-size:19px; letter-spacing:-0.01em;}
   .brand .tagline{font-size:11.5px; color:var(--text-faint); display:none;}
@@ -274,7 +282,8 @@
   .field-row{display:flex; gap:10px;}
   .field-row .field{flex:1 1 0;}
   .panel-meta{font-size:11.5px; color:var(--text-faint); border-top:1px solid var(--border); padding-top:10px;}
-  .panel-actions{display:flex; gap:8px; margin-top:6px;}
+  .panel-actions{display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;}
+  .panel-actions .btn{min-width:80px;}
   .panel-actions .btn{flex:1 1 auto;}
 
   /* modal */
@@ -335,6 +344,7 @@
     <select id="filter-passage" onchange="onFilterChange('filterPassage', this.value)"><option value="">Passage: all</option></select>
     <a id="filter-clear" onclick="clearFilters()" hidden>Clear filters</a>
   </div>
+  <div id="pick-banner" class="pick-banner" hidden></div>
   <div class="body-shell">
     <nav id="sidebar" class="sidebar"></nav>
     <main id="main" class="main"></main>
@@ -394,7 +404,8 @@
     saveError: null,
     filterOwner: "",
     filterClone: "",
-    filterPassage: ""
+    filterPassage: "",
+    pickMode: null
   };
   var realtimeChannel = null;
 
@@ -1037,6 +1048,8 @@
           var mycoTitle = vial.myco==="negative" ? ", mycoplasma negative" : "";
           var mycoBadge = vial.myco==="negative" ? '<span class="myco-badge negative"></span>' : "";
           html += '<button class="cell filled'+hl+'" style="background:var('+t.cssVar+')" title="'+esc(vial.cellLine||"")+' — P'+esc(vial.passage||"?")+mycoTitle+'" onclick="openVialPanel(\''+box.id+'\',\''+pos+'\')">'+pos+mycoBadge+'</button>';
+        }else if(ui.pickMode){
+          html += '<button class="cell pickable" title="Click to place here" onclick="resolvePick(\''+box.id+'\',\''+pos+'\')">'+pos+'</button>';
         }else{
           html += '<button class="cell empty'+hl+'" title="Empty position" onclick="openVialPanel(\''+box.id+'\',\''+pos+'\')">'+pos+'</button>';
         }
@@ -1227,7 +1240,8 @@
 
     html += '<div class="panel-actions">';
     if(!isNew) html += '<button class="btn btn-danger" onclick="deleteVial(\''+loc.box.id+'\',\''+pos+'\')">Delete</button>';
-    if(!isNew) html += '<button class="btn" onclick="openDuplicateModal(\''+loc.box.id+'\',\''+pos+'\')">Duplicate…</button>';
+    if(!isNew) html += '<button class="btn" onclick="startDuplicatePick(\''+loc.box.id+'\',\''+pos+'\')">Duplicate…</button>';
+    if(!isNew) html += '<button class="btn" onclick="startMovePick(\''+loc.box.id+'\',\''+pos+'\')">Move…</button>';
     html += '<button class="btn btn-primary" onclick="saveVial(\''+loc.box.id+'\',\''+pos+'\')">'+(isNew?"Add":"Save")+'</button>';
     html += '</div>';
     html += '</div></div>';
@@ -1268,49 +1282,73 @@
     await refreshInventory();
   }
 
-  function emptyPositionsInBox(box){
-    var out = [];
-    for(var r=1; r<=box.rows; r++){
-      for(var c=1; c<=box.cols; c++){
-        var pos = rowLabel(r)+c;
-        if(!box.vials[pos]) out.push(pos);
-      }
-    }
-    return out;
-  }
-
-  function openDuplicateModal(boxId, pos){
+  // ---------- duplicate / move by clicking a target position ----------
+  function startDuplicatePick(boxId, pos){
     var loc = locateBox(boxId);
-    if(!loc) return;
-    var vial = loc.box.vials[pos];
+    var vial = loc && loc.box.vials[pos];
     if(!vial) return;
-    var avail = emptyPositionsInBox(loc.box);
-    ui.addModal = {kind:"duplicate", boxId:boxId, sourcePos:pos, cellLine:vial.cellLine, maxAvail:avail.length};
-    renderModal();
+    ui.pickMode = {kind:"duplicate", sourceBoxId:boxId, sourcePos:pos, vial:vial};
+    closeVialPanel();
+    renderPickBanner();
   }
 
-  async function submitDuplicate(){
-    var m = ui.addModal;
-    var loc = locateBox(m.boxId);
-    if(!loc) return;
-    var source = loc.box.vials[m.sourcePos];
-    if(!source) return;
-    var count = Math.max(1, Math.min(m.maxAvail, parseInt(document.getElementById("m-dup-count").value,10) || 1));
-    var targets = emptyPositionsInBox(loc.box).slice(0, count);
-    var rows = targets.map(function(pos){
-      return {
-        box_id: m.boxId, position: pos,
-        cell_line: source.cellLine, type: source.type, passage: source.passage,
-        freeze_date: source.freezeDate || null, count: source.count, medium: source.medium,
-        myco: source.myco, clone: source.clone, viability: source.viability,
-        owner: source.owner, notes: source.notes
-      };
-    });
-    closeAddModal();
-    await withSaving(function(){ return supabase.from("samples").insert(rows); });
-    ui.editingPos = null;
-    await refreshInventory();
-    alert("Duplicated into " + targets.length + " position(s): " + targets.join(", "));
+  function startMovePick(boxId, pos){
+    var loc = locateBox(boxId);
+    if(!loc || !loc.box.vials[pos]) return;
+    ui.pickMode = {kind:"move", sourceBoxId:boxId, sourcePos:pos, cellLine:loc.box.vials[pos].cellLine};
+    closeVialPanel();
+    renderPickBanner();
+  }
+
+  function cancelPick(){
+    ui.pickMode = null;
+    renderPickBanner();
+    renderMain();
+  }
+
+  async function resolvePick(targetBoxId, targetPos){
+    if(!ui.pickMode) return;
+    var m = ui.pickMode;
+    if(targetBoxId === m.sourceBoxId && targetPos === m.sourcePos) return;
+
+    if(m.kind === "duplicate"){
+      var v = m.vial;
+      await withSaving(function(){
+        return supabase.from("samples").insert({
+          box_id: targetBoxId, position: targetPos,
+          cell_line: v.cellLine, type: v.type, passage: v.passage,
+          freeze_date: v.freezeDate || null, count: v.count, medium: v.medium,
+          myco: v.myco, clone: v.clone, viability: v.viability,
+          owner: v.owner, notes: v.notes
+        });
+      });
+      await refreshInventory();
+      renderPickBanner(); // stays active: click more empty cells to stamp more copies, or Done
+    }else{
+      await withSaving(function(){
+        return supabase.from("samples")
+          .update({box_id: targetBoxId, position: targetPos})
+          .eq("box_id", m.sourceBoxId).eq("position", m.sourcePos);
+      });
+      ui.pickMode = null;
+      await refreshInventory();
+      renderPickBanner();
+    }
+  }
+
+  function renderPickBanner(){
+    var el = document.getElementById("pick-banner");
+    if(!el) return;
+    if(!ui.pickMode){ el.hidden = true; return; }
+    el.hidden = false;
+    var m = ui.pickMode;
+    if(m.kind === "duplicate"){
+      el.innerHTML = '<span>Duplicating "'+esc(m.vial.cellLine||"sample")+'" — click empty positions (any box) to place copies.</span>' +
+        '<button class="btn btn-sm" onclick="cancelPick()">Done</button>';
+    }else{
+      el.innerHTML = '<span>Moving "'+esc(m.cellLine||"sample")+'" from '+m.sourcePos+' — click an empty position to move it there.</span>' +
+        '<button class="btn btn-sm" onclick="cancelPick()">Cancel</button>';
+    }
   }
 
   // ---------- add modals ----------
@@ -1347,16 +1385,6 @@
       html += '<h2>Rename '+typeLabel+'</h2>';
       html += '<div class="field"><label>Name</label><input id="m-name" type="text" value="'+esc(m.currentName)+'" autocomplete="off" autofocus></div>';
       html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitRename()">Save</button></div>';
-    }else if(m.kind==="duplicate"){
-      html += '<h2>Duplicate sample</h2>';
-      if(m.maxAvail === 0){
-        html += '<p style="color:var(--text-muted); font-size:13px;">This box is full — no empty positions left to duplicate into. Create another box or free up a position first.</p>';
-        html += '<div class="modal-actions"><button class="btn btn-primary" onclick="closeAddModal()">OK</button></div>';
-      }else{
-        html += '<p style="color:var(--text-muted); font-size:13px;">Copies "'+esc(m.cellLine||"this sample")+'" (everything except position) into the next empty position(s) of this box. Edit passage or anything else afterwards.</p>';
-        html += '<div class="field"><label>How many copies</label><input id="m-dup-count" type="number" min="1" max="'+m.maxAvail+'" value="1"></div>';
-        html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitDuplicate()">Duplicate</button></div>';
-      }
     }else if(m.kind==="changePassword"){
       html += '<h2>Change password</h2>';
       html += '<div class="auth-error' + (m.error ? " show" : "") + '">' + esc(m.error||"") + '</div>';
@@ -1462,7 +1490,8 @@
   window.onFilterChange=onFilterChange; window.clearFilters=clearFilters;
   window.openVialPanel=openVialPanel; window.closeVialPanel=closeVialPanel;
   window.saveVial=saveVial; window.deleteVial=deleteVial;
-  window.openDuplicateModal=openDuplicateModal; window.submitDuplicate=submitDuplicate;
+  window.startDuplicatePick=startDuplicatePick; window.startMovePick=startMovePick;
+  window.cancelPick=cancelPick; window.resolvePick=resolvePick;
   window.openAddModal=openAddModal; window.closeAddModal=closeAddModal;
   window.openRenameModal=openRenameModal; window.submitRename=submitRename;
   window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
