@@ -89,6 +89,18 @@
     display:flex; align-items:center; gap:16px; padding:0 18px; height:58px; flex:0 0 auto;
     background:var(--surface); border-bottom:1px solid var(--border);
   }
+  .filter-bar{
+    display:flex; align-items:center; gap:10px; padding:8px 18px; flex:0 0 auto; flex-wrap:wrap;
+    background:var(--surface-2); border-bottom:1px solid var(--border);
+  }
+  .filter-label{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.04em;}
+  .filter-bar select{
+    padding:5px 9px; border-radius:6px; border:1px solid var(--border); background:var(--surface);
+    font-size:12.5px; max-width:180px;
+  }
+  .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint);}
+  .filter-bar a:hover{color:var(--accent);}
+  .filter-bar a[hidden]{display:none;}
   .brand{display:flex; align-items:baseline; gap:8px; flex:0 0 auto;}
   .brand .mark{font-family:var(--font-display); font-weight:700; font-size:19px; letter-spacing:-0.01em;}
   .brand .tagline{font-size:11.5px; color:var(--text-faint); display:none;}
@@ -316,6 +328,13 @@
       <button class="btn" onclick="handleLogout()">Log out</button>
     </div>
   </header>
+  <div class="filter-bar">
+    <span class="filter-label">Filter</span>
+    <select id="filter-owner" onchange="onFilterChange('filterOwner', this.value)"><option value="">Researcher: all</option></select>
+    <select id="filter-clone" onchange="onFilterChange('filterClone', this.value)"><option value="">Clone: all</option></select>
+    <select id="filter-passage" onchange="onFilterChange('filterPassage', this.value)"><option value="">Passage: all</option></select>
+    <a id="filter-clear" onclick="clearFilters()" hidden>Clear filters</a>
+  </div>
   <div class="body-shell">
     <nav id="sidebar" class="sidebar"></nav>
     <main id="main" class="main"></main>
@@ -372,7 +391,10 @@
     addModal: null,
     highlightPos: null,
     saving: false,
-    saveError: null
+    saveError: null,
+    filterOwner: "",
+    filterClone: "",
+    filterPassage: ""
   };
   var realtimeChannel = null;
 
@@ -575,6 +597,7 @@
   }
   async function refreshInventory(){
     await loadData();
+    populateFilters();
     renderSidebar(); renderMain(); renderPanel();
   }
 
@@ -587,6 +610,7 @@
     await loadProfiles();
     await loadPendingProfiles();
     await loadData();
+    populateFilters();
     state.tanks.forEach(function(t){ ui.expandedTanks[t.id] = true; });
     renderAll();
     subscribeRealtime();
@@ -856,7 +880,7 @@
   function renderMain(){
     var main = document.getElementById("main");
     if(ui.view === "activity"){ main.innerHTML = renderActivityLog(); loadAuditLog().then(function(){ if(ui.view==="activity") main.innerHTML = renderActivityLog(); }); return; }
-    if(ui.searchQuery.trim()){ main.innerHTML = renderSearchResults(); return; }
+    if(ui.searchQuery.trim() || hasActiveFilters()){ main.innerHTML = renderSearchResults(); return; }
     if(ui.selectedBoxId){
       var loc = locateBox(ui.selectedBoxId);
       if(loc){ main.innerHTML = renderBoxView(loc); return; }
@@ -1058,14 +1082,70 @@
     renderMain();
   }
 
+  function distinctValues(getter){
+    var set = {};
+    allVialsFlat().forEach(function(r){
+      var v = (getter(r.vial) || "").trim();
+      if(v) set[v] = true;
+    });
+    return Object.keys(set).sort(function(a,b){ return a.localeCompare(b, undefined, {numeric:true}); });
+  }
+
+  function populateFilters(){
+    var configs = [
+      {id:"filter-owner", get:function(v){return v.owner;}, allLabel:"Researcher: all", state:"filterOwner"},
+      {id:"filter-clone", get:function(v){return v.clone;}, allLabel:"Clone: all", state:"filterClone"},
+      {id:"filter-passage", get:function(v){return v.passage;}, allLabel:"Passage: all", state:"filterPassage"}
+    ];
+    configs.forEach(function(cfg){
+      var el = document.getElementById(cfg.id);
+      if(!el) return;
+      var values = distinctValues(cfg.get);
+      var current = ui[cfg.state];
+      var html = '<option value="">'+cfg.allLabel+'</option>';
+      values.forEach(function(v){
+        html += '<option value="'+esc(v)+'"'+(v===current?" selected":"")+'>'+esc(v)+'</option>';
+      });
+      el.innerHTML = html;
+      if(current && values.indexOf(current) === -1){ ui[cfg.state] = ""; el.value = ""; }
+    });
+  }
+
+  function hasActiveFilters(){
+    return !!(ui.filterOwner || ui.filterClone || ui.filterPassage);
+  }
+
+  function onFilterChange(key, value){
+    ui[key] = value;
+    ui.view = "inventory";
+    document.getElementById("filter-clear").hidden = !hasActiveFilters();
+    renderMain();
+  }
+
+  function clearFilters(){
+    ui.filterOwner = ""; ui.filterClone = ""; ui.filterPassage = "";
+    document.getElementById("filter-owner").value = "";
+    document.getElementById("filter-clone").value = "";
+    document.getElementById("filter-passage").value = "";
+    document.getElementById("filter-clear").hidden = true;
+    renderMain();
+  }
+
   function renderSearchResults(){
     var q = normalizeSearch(ui.searchQuery);
     var results = allVialsFlat().filter(function(r){
       var v = r.vial;
-      var hay = normalizeSearch([v.cellLine, v.owner, v.notes, v.medium, v.myco, v.clone, (TYPES[v.type]||{}).label, r.tank.name, r.rack.name, r.box.name].join(" "));
-      return hay.indexOf(q) !== -1;
+      if(q){
+        var hay = normalizeSearch([v.cellLine, v.owner, v.notes, v.medium, v.myco, v.clone, (TYPES[v.type]||{}).label, r.tank.name, r.rack.name, r.box.name].join(" "));
+        if(hay.indexOf(q) === -1) return false;
+      }
+      if(ui.filterOwner && (v.owner||"") !== ui.filterOwner) return false;
+      if(ui.filterClone && (v.clone||"") !== ui.filterClone) return false;
+      if(ui.filterPassage && (v.passage||"") !== ui.filterPassage) return false;
+      return true;
     });
-    var html = '<div class="search-head"><h1>Results for "'+esc(ui.searchQuery)+'"</h1><span class="section-title" style="margin:0">'+results.length+' sample(s)</span></div>';
+    var title = ui.searchQuery.trim() ? 'Results for "'+esc(ui.searchQuery)+'"' : "Filtered results";
+    var html = '<div class="search-head"><h1>'+title+'</h1><span class="section-title" style="margin:0">'+results.length+' sample(s)</span></div>';
     if(!results.length){
       html += '<div class="no-results">No samples match this search.</div>';
       return html;
@@ -1147,6 +1227,7 @@
 
     html += '<div class="panel-actions">';
     if(!isNew) html += '<button class="btn btn-danger" onclick="deleteVial(\''+loc.box.id+'\',\''+pos+'\')">Delete</button>';
+    if(!isNew) html += '<button class="btn" onclick="openDuplicateModal(\''+loc.box.id+'\',\''+pos+'\')">Duplicate…</button>';
     html += '<button class="btn btn-primary" onclick="saveVial(\''+loc.box.id+'\',\''+pos+'\')">'+(isNew?"Add":"Save")+'</button>';
     html += '</div>';
     html += '</div></div>';
@@ -1187,6 +1268,51 @@
     await refreshInventory();
   }
 
+  function emptyPositionsInBox(box){
+    var out = [];
+    for(var r=1; r<=box.rows; r++){
+      for(var c=1; c<=box.cols; c++){
+        var pos = rowLabel(r)+c;
+        if(!box.vials[pos]) out.push(pos);
+      }
+    }
+    return out;
+  }
+
+  function openDuplicateModal(boxId, pos){
+    var loc = locateBox(boxId);
+    if(!loc) return;
+    var vial = loc.box.vials[pos];
+    if(!vial) return;
+    var avail = emptyPositionsInBox(loc.box);
+    ui.addModal = {kind:"duplicate", boxId:boxId, sourcePos:pos, cellLine:vial.cellLine, maxAvail:avail.length};
+    renderModal();
+  }
+
+  async function submitDuplicate(){
+    var m = ui.addModal;
+    var loc = locateBox(m.boxId);
+    if(!loc) return;
+    var source = loc.box.vials[m.sourcePos];
+    if(!source) return;
+    var count = Math.max(1, Math.min(m.maxAvail, parseInt(document.getElementById("m-dup-count").value,10) || 1));
+    var targets = emptyPositionsInBox(loc.box).slice(0, count);
+    var rows = targets.map(function(pos){
+      return {
+        box_id: m.boxId, position: pos,
+        cell_line: source.cellLine, type: source.type, passage: source.passage,
+        freeze_date: source.freezeDate || null, count: source.count, medium: source.medium,
+        myco: source.myco, clone: source.clone, viability: source.viability,
+        owner: source.owner, notes: source.notes
+      };
+    });
+    closeAddModal();
+    await withSaving(function(){ return supabase.from("samples").insert(rows); });
+    ui.editingPos = null;
+    await refreshInventory();
+    alert("Duplicated into " + targets.length + " position(s): " + targets.join(", "));
+  }
+
   // ---------- add modals ----------
   function openAddModal(kind, parentId){
     if(kind==="tank") ui.addModal = {kind:"tank"};
@@ -1221,6 +1347,16 @@
       html += '<h2>Rename '+typeLabel+'</h2>';
       html += '<div class="field"><label>Name</label><input id="m-name" type="text" value="'+esc(m.currentName)+'" autocomplete="off" autofocus></div>';
       html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitRename()">Save</button></div>';
+    }else if(m.kind==="duplicate"){
+      html += '<h2>Duplicate sample</h2>';
+      if(m.maxAvail === 0){
+        html += '<p style="color:var(--text-muted); font-size:13px;">This box is full — no empty positions left to duplicate into. Create another box or free up a position first.</p>';
+        html += '<div class="modal-actions"><button class="btn btn-primary" onclick="closeAddModal()">OK</button></div>';
+      }else{
+        html += '<p style="color:var(--text-muted); font-size:13px;">Copies "'+esc(m.cellLine||"this sample")+'" (everything except position) into the next empty position(s) of this box. Edit passage or anything else afterwards.</p>';
+        html += '<div class="field"><label>How many copies</label><input id="m-dup-count" type="number" min="1" max="'+m.maxAvail+'" value="1"></div>';
+        html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitDuplicate()">Duplicate</button></div>';
+      }
     }else if(m.kind==="changePassword"){
       html += '<h2>Change password</h2>';
       html += '<div class="auth-error' + (m.error ? " show" : "") + '">' + esc(m.error||"") + '</div>';
@@ -1323,8 +1459,10 @@
   window.setView=setView;
   window.toggleTank=toggleTank; window.toggleRack=toggleRack; window.selectBox=selectBox;
   window.onSearchInput=onSearchInput; window.searchFor=searchFor;
+  window.onFilterChange=onFilterChange; window.clearFilters=clearFilters;
   window.openVialPanel=openVialPanel; window.closeVialPanel=closeVialPanel;
   window.saveVial=saveVial; window.deleteVial=deleteVial;
+  window.openDuplicateModal=openDuplicateModal; window.submitDuplicate=submitDuplicate;
   window.openAddModal=openAddModal; window.closeAddModal=closeAddModal;
   window.openRenameModal=openRenameModal; window.submitRename=submitRename;
   window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
