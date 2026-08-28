@@ -101,7 +101,7 @@
   .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint); margin-left:auto;}
   .filter-bar a:hover{color:var(--accent);}
   .pick-banner{
-    display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 18px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px 12px; padding:9px 18px; flex-wrap:wrap;
     background:var(--accent-soft); border-bottom:1px solid var(--accent); font-size:13px; color:var(--accent-strong);
   }
   .pick-banner[hidden]{display:none;}
@@ -191,6 +191,7 @@
   .sidebar-foot{margin-top:10px;}
   .row-actions{display:none; gap:2px; flex:0 0 auto;}
   .tree-row:hover .row-actions{display:flex;}
+  @media (hover:none){ .row-actions{display:flex;} } /* touch devices have no hover — always show */
   .icon-btn{
     width:20px; height:20px; display:flex; align-items:center; justify-content:center; border-radius:4px;
     color:var(--text-faint); background:transparent; border:none;
@@ -269,7 +270,7 @@
     color:var(--text-faint);
   }
   .cell{
-    width:34px; height:34px; border-radius:5px; border:1px solid var(--border); background:var(--surface-2);
+    width:var(--cell-size,34px); height:var(--cell-size,34px); border-radius:5px; border:1px solid var(--border); background:var(--surface-2);
     display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:9.5px;
     color:var(--text-faint); position:relative;
   }
@@ -330,6 +331,23 @@
     .body-shell{flex-direction:column;}
     .sidebar{width:100%; max-height:180px; border-right:none; border-bottom:1px solid var(--border);}
     .main{padding:18px 16px 50px;}
+  }
+
+  @media (max-width:480px){
+    .topbar{padding:8px 12px; gap:8px 10px;}
+    .brand .mark{font-size:16px;}
+    .search-wrap{order:3; max-width:none; flex:1 1 100%;}
+    .topbar-right{gap:6px;}
+    .topbar-right .btn{padding:6px 9px; font-size:12.5px;}
+    .account-chip{display:none;} /* saves space on a narrow screen — who you are is not critical here */
+    .filter-bar{padding:8px 10px;}
+    .filter-bar select{max-width:120px; font-size:12px;}
+    .panel{width:100vw; max-width:100vw;}
+    .modal{width:92vw;}
+    :root{--cell-size:28px; --label-size:20px;}
+    .cell{font-size:8.5px;}
+    .grid-label{font-size:9.5px;}
+    .cryo-grid{gap:2px;}
   }
 </style>
 </head>
@@ -1156,7 +1174,7 @@
     html += '<div class="legend-item"><span class="legend-swatch myco-negative"></span>Mycoplasma negative</div>';
     html += '</div>';
 
-    html += '<div class="grid-scroll"><div class="cryo-grid" style="grid-template-columns:26px repeat('+box.cols+',34px)">';
+    html += '<div class="grid-scroll"><div class="cryo-grid" style="grid-template-columns:var(--label-size,26px) repeat('+box.cols+',var(--cell-size,34px))">';
     html += '<div class="grid-label"></div>';
     for(var c=1;c<=box.cols;c++){ html += '<div class="grid-label">'+c+'</div>'; }
     for(var r=1;r<=box.rows;r++){
