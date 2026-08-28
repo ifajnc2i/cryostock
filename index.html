@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --bg:#F3F6F9; --surface:#FFFFFF; --surface-2:#E7ECF1; --surface-3:#DCE3EA;
@@ -339,6 +340,7 @@
   }
 
   @media (max-width:480px){
+    .sidebar{max-height:120px;}
     .topbar{padding:8px 12px; gap:8px 10px;}
     .brand .mark{font-size:16px;}
     .search-wrap{order:3; max-width:none; flex:1 1 100%;}
@@ -377,6 +379,7 @@
     </div>
     <div class="topbar-right">
       <span id="save-status"></span>
+      <button class="btn" onclick="openImportModal()">Import</button>
       <button class="btn" id="export-btn" onclick="exportCSV()">Export CSV</button>
       <div class="account-chip"><span class="who" id="who-am-i"></span></div>
       <button class="btn" onclick="openChangePasswordModal()">Change password</button>
@@ -1716,6 +1719,22 @@
       html += '<div class="field"><label>Columns</label><input id="m-cols" type="number" min="1" max="30" value="9"></div>';
       html += '</div>';
       html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddBox(\''+m.rackId+'\')">Create</button></div>';
+    }else if(m.kind==="import"){
+      html += '<h2>Import samples</h2>';
+      if(m.busy){
+        html += '<p style="color:var(--text-muted); font-size:13px;">Importing… please wait, this can take a moment for a large file.</p>';
+      }else if(m.report){
+        var rep = m.report;
+        html += '<div class="panel-meta">Imported '+rep.samplesImported+' sample(s). Created '+rep.tanksCreated+' tank(s), '+rep.racksCreated+' rack(s), '+rep.boxesCreated+' box(es).</div>';
+        if(rep.skipped.length){
+          html += '<div class="panel-meta" style="color:var(--danger); max-height:180px; overflow-y:auto;">Skipped '+rep.skipped.length+' row(s):<br>'+rep.skipped.map(function(s){return esc(s);}).join('<br>')+'</div>';
+        }
+        html += '<div class="modal-actions"><button class="btn btn-primary" onclick="closeAddModal()">Done</button></div>';
+      }else{
+        html += '<p style="color:var(--text-muted); font-size:13px;">CSV or Excel file, one row per sample. Required columns: <b>Tank, Rack, Box, Position, Cell line</b>. Optional: Type, Passage, Clone, Viability, Freeze date, Count, Medium, Mycoplasma, Owner, Notes — same headers as the CSV export, so an exported file can be edited and re-imported. Tanks, racks and boxes that don\'t exist yet are created automatically; a sample already at a given position is overwritten.</p>';
+        html += '<div class="field"><input id="m-import-file" type="file" accept=".csv,.xlsx,.xls"></div>';
+        html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitImport()">Import</button></div>';
+      }
     }else if(m.kind==="rename"){
       var typeLabel = m.entityType==="tank"?"tank":m.entityType==="rack"?"rack":"box";
       html += '<h2>Rename '+typeLabel+'</h2>';
@@ -1770,6 +1789,188 @@
     ui.expandedRacks[rackId] = true;
     closeAddModal();
     await addBox(rackId, name, rows, cols);
+  }
+
+  // ---------- import from CSV / Excel ----------
+  function openImportModal(){
+    ui.addModal = {kind:"import"};
+    renderModal();
+  }
+
+  var IMPORT_HEADER_MAP = {
+    tank:"tank", rack:"rack", box:"box", position:"position",
+    cellline:"cellLine", type:"type", passage:"passage",
+    clone:"clone", viability:"viability", freezedate:"freezeDate",
+    count:"count", medium:"medium", mycoplasma:"myco",
+    owner:"owner", notes:"notes"
+  };
+  function normalizeHeader(h){ return String(h||"").toLowerCase().replace(/[^a-z]/g, ""); }
+  function normKey(s){ return String(s||"").trim().toLowerCase(); }
+
+  function parseTypeValue(s){
+    s = String(s||"").trim().toLowerCase();
+    for(var i=0;i<TYPE_ORDER.length;i++){
+      var k = TYPE_ORDER[i];
+      if(k === s || TYPES[k].label.toLowerCase() === s) return k;
+    }
+    return "other";
+  }
+  function parseMycoValue(s){
+    return String(s||"").trim().toLowerCase() === "negative" ? "negative" : "";
+  }
+  function inferDims(pos){
+    var m = /^([A-Za-z]+)(\d+)$/.exec(pos);
+    if(!m) return {rows:9, cols:9};
+    var letters = m[1].toUpperCase(), rowNum = 0;
+    for(var i=0;i<letters.length;i++){ rowNum = rowNum*26 + (letters.charCodeAt(i)-64); }
+    return {rows: Math.max(9, rowNum), cols: Math.max(9, parseInt(m[2],10))};
+  }
+
+  // Minimal CSV parser — handles quoted fields with embedded commas/newlines/escaped quotes.
+  function parseCSV(text){
+    var rows = [], row = [], field = "", inQuotes = false;
+    for(var i=0;i<text.length;i++){
+      var c = text[i];
+      if(inQuotes){
+        if(c === '"'){ if(text[i+1] === '"'){ field += '"'; i++; } else inQuotes = false; }
+        else field += c;
+      }else{
+        if(c === '"') inQuotes = true;
+        else if(c === ','){ row.push(field); field = ""; }
+        else if(c === '\n'){ row.push(field); rows.push(row); row=[]; field=""; }
+        else if(c === '\r'){ /* skip — \n handles the line break */ }
+        else field += c;
+      }
+    }
+    if(field.length || row.length){ row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function rowsToObjects(rows){
+    rows = rows.filter(function(r){ return r.some(function(c){ return String(c==null?"":c).trim() !== ""; }); });
+    if(!rows.length) return [];
+    var headers = rows[0].map(normalizeHeader);
+    return rows.slice(1).map(function(r){
+      var obj = {};
+      headers.forEach(function(h, idx){
+        var key = IMPORT_HEADER_MAP[h];
+        if(key) obj[key] = r[idx];
+      });
+      return obj;
+    });
+  }
+
+  function parseImportFile(file){
+    return new Promise(function(resolve, reject){
+      var isExcel = /\.xlsx?$/i.test(file.name);
+      var reader = new FileReader();
+      reader.onerror = function(){ reject(new Error("Could not read the file")); };
+      if(isExcel){
+        reader.onload = function(){
+          try{
+            var wb = XLSX.read(new Uint8Array(reader.result), {type:"array"});
+            var sheet = wb.Sheets[wb.SheetNames[0]];
+            var rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:""});
+            resolve(rowsToObjects(rows));
+          }catch(e){ reject(e); }
+        };
+        reader.readAsArrayBuffer(file);
+      }else{
+        reader.onload = function(){
+          try{ resolve(rowsToObjects(parseCSV(String(reader.result)))); }
+          catch(e){ reject(e); }
+        };
+        reader.readAsText(file);
+      }
+    });
+  }
+
+  // Resolves (creating as needed) the tank/rack/box for each row, in order, then
+  // upserts the sample. Sequential on purpose so repeated names within the same
+  // file reuse the tank/rack/box just created instead of racing to create it twice.
+  async function processImportRows(objRows){
+    var report = {tanksCreated:0, racksCreated:0, boxesCreated:0, samplesImported:0, skipped:[]};
+    var tanks = {};
+    state.tanks.forEach(function(t){
+      var racks = {};
+      t.racks.forEach(function(r){
+        var boxes = {};
+        r.boxes.forEach(function(b){ boxes[normKey(b.name)] = {id:b.id, rows:b.rows, cols:b.cols}; });
+        racks[normKey(r.name)] = {id:r.id, boxes:boxes};
+      });
+      tanks[normKey(t.name)] = {id:t.id, racks:racks};
+    });
+
+    for(var i=0;i<objRows.length;i++){
+      var r = objRows[i], rowNum = i + 2;
+      var tankName = (r.tank||"").trim(), rackName = (r.rack||"").trim(), boxName = (r.box||"").trim();
+      var pos = (r.position||"").trim().toUpperCase();
+      var cellLine = (r.cellLine||"").trim();
+      if(!tankName || !rackName || !boxName || !pos || !cellLine){
+        report.skipped.push("Row "+rowNum+": missing tank, rack, box, position or cell line");
+        continue;
+      }
+      var tank = tanks[normKey(tankName)];
+      if(!tank){
+        var tRes = await supabase.from("tanks").insert({name:tankName, sort_order:Object.keys(tanks).length, created_by:session.user.id}).select().single();
+        if(tRes.error){ report.skipped.push("Row "+rowNum+": couldn't create tank \""+tankName+"\" — "+tRes.error.message); continue; }
+        tank = {id:tRes.data.id, racks:{}};
+        tanks[normKey(tankName)] = tank;
+        report.tanksCreated++;
+      }
+      var rack = tank.racks[normKey(rackName)];
+      if(!rack){
+        var rRes = await supabase.from("racks").insert({tank_id:tank.id, name:rackName, sort_order:Object.keys(tank.racks).length, created_by:session.user.id}).select().single();
+        if(rRes.error){ report.skipped.push("Row "+rowNum+": couldn't create rack \""+rackName+"\" — "+rRes.error.message); continue; }
+        rack = {id:rRes.data.id, boxes:{}};
+        tank.racks[normKey(rackName)] = rack;
+        report.racksCreated++;
+      }
+      var box = rack.boxes[normKey(boxName)];
+      var dims = inferDims(pos);
+      if(!box){
+        var bRes = await supabase.from("boxes").insert({rack_id:rack.id, name:boxName, rows:dims.rows, cols:dims.cols, sort_order:Object.keys(rack.boxes).length, created_by:session.user.id}).select().single();
+        if(bRes.error){ report.skipped.push("Row "+rowNum+": couldn't create box \""+boxName+"\" — "+bRes.error.message); continue; }
+        box = {id:bRes.data.id, rows:dims.rows, cols:dims.cols};
+        rack.boxes[normKey(boxName)] = box;
+        report.boxesCreated++;
+      }else if(dims.rows > box.rows || dims.cols > box.cols){
+        box.rows = Math.max(box.rows, dims.rows);
+        box.cols = Math.max(box.cols, dims.cols);
+        await supabase.from("boxes").update({rows:box.rows, cols:box.cols}).eq("id", box.id);
+      }
+      var sampleRow = {
+        box_id: box.id, position: pos, cell_line: cellLine,
+        type: parseTypeValue(r.type), passage: (r.passage||"").trim(),
+        freeze_date: (r.freezeDate||"").trim() || null,
+        count: (r.count||"").trim(), medium: (r.medium||"").trim(),
+        myco: parseMycoValue(r.myco), clone: (r.clone||"").trim(),
+        viability: (r.viability||"").trim(),
+        owner: (r.owner||"").trim(), notes: (r.notes||"").trim()
+      };
+      var sRes = await supabase.from("samples").upsert(sampleRow, {onConflict:"box_id,position"});
+      if(sRes.error){ report.skipped.push("Row "+rowNum+" ("+pos+"): "+sRes.error.message); continue; }
+      report.samplesImported++;
+    }
+    return report;
+  }
+
+  async function submitImport(){
+    var fileInput = document.getElementById("m-import-file");
+    var file = fileInput && fileInput.files[0];
+    if(!file){ alert("Choose a file first."); return; }
+    ui.addModal = {kind:"import", busy:true};
+    renderModal();
+    var report;
+    try{
+      var objRows = await parseImportFile(file);
+      report = await processImportRows(objRows);
+    }catch(e){
+      report = {tanksCreated:0, racksCreated:0, boxesCreated:0, samplesImported:0, skipped:["File error: "+(e && e.message ? e.message : e)]};
+    }
+    ui.addModal = {kind:"import", report:report};
+    renderModal();
+    await refreshInventory();
   }
 
   // ---------- deletes ----------
@@ -1839,6 +2040,7 @@
   window.confirmDeleteTank=confirmDeleteTank; window.confirmDeleteRack=confirmDeleteRack; window.confirmDeleteBox=confirmDeleteBox;
   window.jumpToFirstBox=jumpToFirstBox; window.jumpToVial=jumpToVial; window.jumpToBoxDirect=jumpToBoxDirect;
   window.exportCSV=exportCSV;
+  window.openImportModal=openImportModal; window.submitImport=submitImport;
 
   initAuth();
 })();
