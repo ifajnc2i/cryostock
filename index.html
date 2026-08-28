@@ -1135,8 +1135,13 @@
     if(cellLineCounts.length){
       html += '<div class="section-title">Cell lines in stock</div><div class="recent-list">';
       cellLineCounts.forEach(function(cl){
+        var dateLabel = "";
+        if(cl.earliestDate){
+          dateLabel = cl.earliestDate === cl.latestDate ? fmtDate(cl.earliestDate) : "frozen " + fmtDate(cl.earliestDate) + " – " + fmtDate(cl.latestDate);
+        }
         html += '<div class="recent-row" onclick="searchFor(\''+jsEsc(cl.label)+'\')">' +
           '<span class="cell-line">'+esc(cl.label)+'</span>' +
+          (dateLabel ? '<span class="breadcrumb">'+esc(dateLabel)+'</span>' : '') +
           '<span class="when tabular">'+cl.count+' vial'+(cl.count===1?"":"s")+'</span>' +
           '</div>';
       });
@@ -1282,16 +1287,22 @@
     allVialsFlat().forEach(function(r){
       var name = (r.vial.cellLine || "").trim() || "(unnamed)";
       var norm = normalizeSearch(name) || "(unnamed)";
-      if(!map[norm]) map[norm] = {count:0, variants:{}};
+      if(!map[norm]) map[norm] = {count:0, variants:{}, dates:[]};
       map[norm].count++;
       map[norm].variants[name] = (map[norm].variants[name]||0) + 1;
+      if(r.vial.freezeDate) map[norm].dates.push(r.vial.freezeDate);
     });
     var list = Object.keys(map).map(function(k){
       var entry = map[k];
       var bestLabel = Object.keys(entry.variants).sort(function(a,b){
         return entry.variants[b] - entry.variants[a];
       })[0];
-      return {label:bestLabel, count:entry.count};
+      var sortedDates = entry.dates.slice().sort();
+      return {
+        label:bestLabel, count:entry.count,
+        earliestDate: sortedDates[0] || "",
+        latestDate: sortedDates[sortedDates.length-1] || ""
+      };
     });
     list.sort(function(a,b){ return b.count - a.count || a.label.localeCompare(b.label); });
     return list;
