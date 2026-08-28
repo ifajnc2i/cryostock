@@ -379,6 +379,7 @@
     </div>
     <div class="topbar-right">
       <span id="save-status"></span>
+      <button class="btn" onclick="downloadImportTemplate()">Template</button>
       <button class="btn" onclick="openImportModal()">Import</button>
       <button class="btn" id="export-btn" onclick="exportCSV()">Export CSV</button>
       <div class="account-chip"><span class="who" id="who-am-i"></span></div>
@@ -1135,13 +1136,8 @@
     if(cellLineCounts.length){
       html += '<div class="section-title">Cell lines in stock</div><div class="recent-list">';
       cellLineCounts.forEach(function(cl){
-        var dateLabel = "";
-        if(cl.earliestDate){
-          dateLabel = cl.earliestDate === cl.latestDate ? fmtDate(cl.earliestDate) : "frozen " + fmtDate(cl.earliestDate) + " – " + fmtDate(cl.latestDate);
-        }
         html += '<div class="recent-row" onclick="searchFor(\''+jsEsc(cl.label)+'\')">' +
           '<span class="cell-line">'+esc(cl.label)+'</span>' +
-          (dateLabel ? '<span class="breadcrumb">'+esc(dateLabel)+'</span>' : '') +
           '<span class="when tabular">'+cl.count+' vial'+(cl.count===1?"":"s")+'</span>' +
           '</div>';
       });
@@ -1287,22 +1283,16 @@
     allVialsFlat().forEach(function(r){
       var name = (r.vial.cellLine || "").trim() || "(unnamed)";
       var norm = normalizeSearch(name) || "(unnamed)";
-      if(!map[norm]) map[norm] = {count:0, variants:{}, dates:[]};
+      if(!map[norm]) map[norm] = {count:0, variants:{}};
       map[norm].count++;
       map[norm].variants[name] = (map[norm].variants[name]||0) + 1;
-      if(r.vial.freezeDate) map[norm].dates.push(r.vial.freezeDate);
     });
     var list = Object.keys(map).map(function(k){
       var entry = map[k];
       var bestLabel = Object.keys(entry.variants).sort(function(a,b){
         return entry.variants[b] - entry.variants[a];
       })[0];
-      var sortedDates = entry.dates.slice().sort();
-      return {
-        label:bestLabel, count:entry.count,
-        earliestDate: sortedDates[0] || "",
-        latestDate: sortedDates[sortedDates.length-1] || ""
-      };
+      return {label:bestLabel, count:entry.count};
     });
     list.sort(function(a,b){ return b.count - a.count || a.label.localeCompare(b.label); });
     return list;
@@ -1404,7 +1394,7 @@
       html += '<span class="type-dot" style="background:var('+t.cssVar+')"></span>';
       html += '<span class="cell-line">'+esc(r.vial.cellLine||"(unnamed)")+'</span>';
       html += '<span class="breadcrumb">'+esc(r.tank.name)+' › '+esc(r.rack.name)+' › '+esc(r.box.name)+' › '+r.pos+'</span>';
-      html += '<span class="when">P'+esc(r.vial.passage||"?")+' · '+esc(r.vial.owner||"—")+'</span>';
+      html += '<span class="when">P'+esc(r.vial.passage||"?")+' · '+esc(r.vial.owner||"—")+' · '+fmtDate(r.vial.freezeDate)+'</span>';
       html += '</div>';
     });
     html += '</div>';
@@ -1742,7 +1732,7 @@
         }
         html += '<div class="modal-actions"><button class="btn btn-primary" onclick="closeAddModal()">Done</button></div>';
       }else{
-        html += '<p style="color:var(--text-muted); font-size:13px;">CSV or Excel file, one row per sample. Required columns: <b>Tank, Rack, Box, Position, Cell line</b>. Optional: Type, Passage, Clone, Viability, Freeze date, Count, Medium, Mycoplasma, Owner, Notes — same headers as the CSV export, so an exported file can be edited and re-imported. Tanks, racks and boxes that don\'t exist yet are created automatically; a sample already at a given position is overwritten.</p>';
+        html += '<p style="color:var(--text-muted); font-size:13px;">CSV or Excel file, one row per sample. Required columns: <b>Tank, Rack, Box, Position, Cell line</b>. Optional: Type, Passage, Clone, Viability, Freeze date, Count, Medium, Mycoplasma, Owner, Notes — same headers as the CSV export, so an exported file can be edited and re-imported. Not sure of the format? Use the <b>Template</b> button in the top bar first. Tanks, racks and boxes that don\'t exist yet are created automatically; a sample already at a given position is overwritten.</p>';
         html += '<div class="field"><input id="m-import-file" type="file" accept=".csv,.xlsx,.xls"></div>';
         html += '<div class="modal-actions"><button class="btn" onclick="closeAddModal()">Cancel</button><button class="btn btn-primary" onclick="submitImport()">Import</button></div>';
       }
@@ -2004,14 +1994,7 @@
   }
 
   // ---------- export ----------
-  function exportCSV(){
-    var mycoLabel = {negative:"Negative"};
-    var rows = [["Tank","Rack","Box","Position","Cell line","Type","Passage","Clone","Viability","Freeze date","Count","Medium","Mycoplasma","Owner","Notes","Added at","Added by"]];
-    allVialsFlat().forEach(function(r){
-      var v = r.vial;
-      rows.push([r.tank.name, r.rack.name, r.box.name, r.pos, v.cellLine, (TYPES[v.type]||{}).label||v.type,
-        v.passage, v.clone, v.viability, v.freezeDate, v.count, v.medium, mycoLabel[v.myco]||"Not sure (not tested)", v.owner, v.notes, v.addedAt, v.addedBy]);
-    });
+  function downloadCSV(filename, rows){
     var csv = rows.map(function(row){
       return row.map(function(cell){
         var s = String(cell==null?"":cell);
@@ -2022,9 +2005,26 @@
     var blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
-    a.href = url; a.download = "cryostock_export.csv";
+    a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  function downloadImportTemplate(){
+    var headers = ["Tank","Rack","Box","Position","Cell line","Type","Passage","Clone","Viability","Freeze date","Count","Medium","Mycoplasma","Owner","Notes"];
+    var example = ["Tank 1","Rack A","Box 1","A1","PC3-PIP","Tumor line","P8","Clone 4B2","92%","2026-08-27","5x10^6 /mL","90% FBS + 10% DMSO","Negative","Iveta","example row — delete before importing"];
+    downloadCSV("cryostock_import_template.csv", [headers, example]);
+  }
+
+  function exportCSV(){
+    var mycoLabel = {negative:"Negative"};
+    var rows = [["Tank","Rack","Box","Position","Cell line","Type","Passage","Clone","Viability","Freeze date","Count","Medium","Mycoplasma","Owner","Notes","Added at","Added by"]];
+    allVialsFlat().forEach(function(r){
+      var v = r.vial;
+      rows.push([r.tank.name, r.rack.name, r.box.name, r.pos, v.cellLine, (TYPES[v.type]||{}).label||v.type,
+        v.passage, v.clone, v.viability, v.freezeDate, v.count, v.medium, mycoLabel[v.myco]||"Not sure (not tested)", v.owner, v.notes, v.addedAt, v.addedBy]);
+    });
+    downloadCSV("cryostock_export.csv", rows);
   }
 
   window.handleLogin=handleLogin; window.handleForgotPassword=handleForgotPassword; window.handleLogout=handleLogout;
@@ -2052,6 +2052,7 @@
   window.jumpToFirstBox=jumpToFirstBox; window.jumpToVial=jumpToVial; window.jumpToBoxDirect=jumpToBoxDirect;
   window.exportCSV=exportCSV;
   window.openImportModal=openImportModal; window.submitImport=submitImport;
+  window.downloadImportTemplate=downloadImportTemplate;
 
   initAuth();
 })();
