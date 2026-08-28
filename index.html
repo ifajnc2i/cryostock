@@ -383,6 +383,8 @@
     </div>
     <div class="nav-tabs">
       <button class="nav-tab" id="tab-inventory" onclick="setView('inventory')">Inventory</button>
+      <button class="nav-tab" id="tab-boxes" onclick="setView('boxes')">Boxes with space</button>
+      <button class="nav-tab" id="tab-celllines" onclick="setView('celllines')">Cell lines</button>
       <button class="nav-tab" id="tab-activity" onclick="setView('activity')">Activity log</button>
     </div>
     <div class="topbar-right">
@@ -463,6 +465,9 @@
     dateSortDir: "",
     boxSortKey: "",
     boxSortDir: "asc",
+    boxesFilterRack: "",
+    boxesSortKey: "empty",
+    boxesSortDir: "desc",
     pickMode: null,
     selectedCells: []
   };
@@ -670,6 +675,7 @@
   }
   async function refreshInventory(){
     await loadData();
+    await loadAuditLog();
     renderSidebar(); renderMain(); renderPanel();
   }
 
@@ -682,6 +688,7 @@
     await loadProfiles();
     await loadPendingProfiles();
     await loadData();
+    await loadAuditLog();
     state.tanks.forEach(function(t){ ui.expandedTanks[t.id] = true; });
     renderAll();
     subscribeRealtime();
@@ -921,11 +928,14 @@
     setView("inventory");
   }
 
+  var NAV_TABS = ["inventory","boxes","celllines","activity"];
   function setView(v){
     ui.view = v; ui.searchQuery = ""; document.getElementById("search-input").value = "";
-    if(v === "inventory"){ ui.selectedBoxId = null; } // clicking the tab always returns to the overview
-    document.getElementById("tab-inventory").classList.toggle("active", v==="inventory");
-    document.getElementById("tab-activity").classList.toggle("active", v==="activity");
+    ui.selectedBoxId = null; // clicking any tab always returns to that tab's top-level list
+    NAV_TABS.forEach(function(name){
+      var el = document.getElementById("tab-"+name);
+      if(el) el.classList.toggle("active", v===name);
+    });
     renderSidebar();
     renderMain();
     pushViewState();
@@ -944,9 +954,10 @@
     ui.searchQuery = "";
     var si = document.getElementById("search-input");
     if(si) si.value = "";
-    var ti = document.getElementById("tab-inventory"), ta = document.getElementById("tab-activity");
-    if(ti) ti.classList.toggle("active", ui.view==="inventory");
-    if(ta) ta.classList.toggle("active", ui.view==="activity");
+    NAV_TABS.forEach(function(name){
+      var el = document.getElementById("tab-"+name);
+      if(el) el.classList.toggle("active", ui.view===name);
+    });
     renderSidebar();
     renderMain();
   });
@@ -1043,7 +1054,7 @@
   function toggleTank(id){ ui.expandedTanks[id] = !ui.expandedTanks[id]; renderSidebar(); }
   function toggleRack(id){ ui.expandedRacks[id] = !ui.expandedRacks[id]; renderSidebar(); }
   function selectBox(id){
-    ui.selectedBoxId = id; ui.searchQuery = ""; ui.view = "inventory"; ui.selectedCells = [];
+    ui.selectedBoxId = id; ui.searchQuery = ""; ui.selectedCells = [];
     document.getElementById("search-input").value = "";
     renderSidebar(); renderMain();
     pushViewState();
@@ -1052,13 +1063,15 @@
   // ---------- main ----------
   function renderMain(){
     var main = document.getElementById("main");
-    if(ui.view === "activity"){ main.innerHTML = renderActivityLog(); loadAuditLog().then(function(){ if(ui.view==="activity") main.innerHTML = renderActivityLog(); }); return; }
     if(ui.searchQuery.trim() || hasActiveFilters()){ main.innerHTML = renderSearchResults(); return; }
     if(ui.selectedBoxId){
       var loc = locateBox(ui.selectedBoxId);
       if(loc){ main.innerHTML = renderBoxView(loc); return; }
       ui.selectedBoxId = null;
     }
+    if(ui.view === "activity"){ main.innerHTML = renderActivityLog(); loadAuditLog().then(function(){ if(ui.view==="activity" && !ui.selectedBoxId) main.innerHTML = renderActivityLog(); }); return; }
+    if(ui.view === "boxes"){ main.innerHTML = renderBoxesWithSpaceView(); return; }
+    if(ui.view === "celllines"){ main.innerHTML = renderCellLinesView(); return; }
     main.innerHTML = renderDashboard();
   }
 
@@ -1098,69 +1111,13 @@
         '<button class="btn btn-primary" onclick="openAddModal(\'tank\')">+ Create a tank</button>' +
         '</div>';
     }
-    var totalVials=0, totalCap=0, totalBoxes=0, totalRacks=0;
-    state.tanks.forEach(function(t){
-      totalRacks += t.racks.length;
-      t.racks.forEach(function(r){
-        totalBoxes += r.boxes.length;
-        r.boxes.forEach(function(b){ totalVials += boxOccupied(b); totalCap += boxTotal(b); });
-      });
-    });
-
     var html = banner + '<div class="dash-head"><h1>Overview</h1></div>';
-    html += '<div class="stat-strip">';
-    html += statPill(state.tanks.length, "Tanks");
-    html += statPill(totalRacks, "Racks");
-    html += statPill(totalBoxes, "Boxes");
-    html += statPill(totalVials, "Samples");
-    html += statPill(totalCap ? Math.round(100*totalVials/totalCap)+"%" : "—", "Occupancy");
-    html += '</div>';
-
-    html += '<div class="tank-grid">';
-    state.tanks.forEach(function(tank){
-      var occ=0, tot=0;
-      tank.racks.forEach(function(r){ r.boxes.forEach(function(b){ occ+=boxOccupied(b); tot+=boxTotal(b); }); });
-      var pct = tot ? Math.round(100*occ/tot) : 0;
-      html += '<div class="tank-card" onclick="jumpToFirstBox(\''+tank.id+'\')">';
-      html += '<h3>'+esc(tank.name)+'</h3>';
-      html += '<div class="meta"><span>'+tank.racks.length+' rack(s)</span><span>'+occ+' / '+tot+' positions filled</span></div>';
-      html += '<div class="occ-bar"><div style="width:'+pct+'%"></div></div>';
-      html += '</div>';
-    });
-    html += '</div>';
-
-    html += renderFilterControls();
-
-    var boxesWithSpace = computeBoxesWithSpace();
-    if(boxesWithSpace.length){
-      html += '<div class="section-title">Boxes with free space</div><div class="recent-list">';
-      boxesWithSpace.forEach(function(b){
-        html += '<div class="recent-row" onclick="jumpToBoxDirect(\''+b.box.id+'\')">' +
-          '<span class="cell-line">'+esc(b.box.name)+'</span>' +
-          '<span class="breadcrumb">'+esc(b.tank.name)+' › '+esc(b.rack.name)+'</span>' +
-          '<span class="when tabular">'+b.empty+' empty / '+b.tot+'</span>' +
-          '</div>';
-      });
-      html += '</div>';
-    }
-
-    var cellLineCounts = computeCellLineCounts();
-    if(cellLineCounts.length){
-      html += '<div class="section-title">Cell lines in stock</div><div class="recent-list">';
-      cellLineCounts.forEach(function(cl){
-        html += '<div class="recent-row" onclick="searchFor(\''+jsEsc(cl.label)+'\')">' +
-          '<span class="cell-line">'+esc(cl.label)+'</span>' +
-          '<span class="when tabular">'+cl.count+' vial'+(cl.count===1?"":"s")+'</span>' +
-          '</div>';
-      });
-      html += '</div>';
-    }
 
     var recent = allVialsFlat().sort(function(a,b){
       return (b.vial.addedAt||"").localeCompare(a.vial.addedAt||"");
     }).slice(0,8);
     if(recent.length){
-      html += '<div class="section-title">Recent additions</div><div class="recent-list">';
+      html += '<div class="section-title" style="margin-top:0">Recently added</div><div class="recent-list">';
       recent.forEach(function(r){
         var t = TYPES[r.vial.type] || TYPES.other;
         html += '<div class="recent-row" onclick="jumpToVial(\''+r.box.id+'\',\''+r.pos+'\')">';
@@ -1172,9 +1129,120 @@
       });
       html += '</div>';
     }
+
+    html += renderRecentRemovals();
+
+    if(!recent.length && !computeRecentRemovals(1).length){
+      html += '<p style="color:var(--text-muted)">Nothing added or removed yet.</p>';
+    }
     return html;
   }
   function statPill(n,l){ return '<div class="stat-pill"><span class="n tabular">'+n+'</span><span class="l">'+l+'</span></div>'; }
+
+  function computeRecentRemovals(limit){
+    return auditRows.filter(function(r){ return r.table_name === "samples" && r.action === "delete"; }).slice(0, limit||8);
+  }
+
+  function renderRecentRemovals(){
+    var removals = computeRecentRemovals(8);
+    if(!removals.length) return "";
+    var html = '<div class="section-title">Recently removed</div><div class="recent-list">';
+    removals.forEach(function(row){
+      var d = row.old_data || {};
+      var loc = locateBox(d.box_id);
+      var breadcrumb = loc
+        ? esc(loc.tank.name)+' › '+esc(loc.rack.name)+' › '+esc(loc.box.name)+' › '+esc(d.position||"")
+        : esc(d.position||"")+' (box no longer exists)';
+      html += '<div class="recent-row" style="cursor:default;">' +
+        '<span class="type-dot" style="background:var(--danger)"></span>' +
+        '<span class="cell-line">'+esc(d.cell_line||"(unnamed)")+'</span>' +
+        '<span class="breadcrumb">'+breadcrumb+'</span>' +
+        '<span class="when">removed '+timeAgo(row.changed_at)+' by '+esc(profileName(row.changed_by))+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function renderBoxesWithSpaceView(){
+    var html = '<div class="dash-head"><h1>Boxes with free space</h1></div>';
+    var all = computeBoxesWithSpace();
+    if(!all.length){
+      html += '<div class="no-results">Every box is full — nice work, or time for a new one.</div>';
+      return html;
+    }
+    var rackNames = [], seen = {};
+    all.forEach(function(b){ if(!seen[b.rack.name]){ seen[b.rack.name] = true; rackNames.push(b.rack.name); } });
+    rackNames.sort();
+
+    html += '<div class="filter-bar"><span class="filter-label">Filter</span>';
+    html += '<select onchange="onBoxesFilterChange(this.value)"><option value=""'+(!ui.boxesFilterRack?" selected":"")+'>Rack: all</option>';
+    rackNames.forEach(function(n){ html += '<option value="'+esc(n)+'"'+(n===ui.boxesFilterRack?" selected":"")+'>'+esc(n)+'</option>'; });
+    html += '</select></div>';
+
+    html += '<div class="sort-control"><span class="filter-label">Sort by</span>';
+    [{key:"empty",label:"Free space"},{key:"box",label:"Box name"},{key:"rack",label:"Rack name"}].forEach(function(f){
+      var active = ui.boxesSortKey === f.key;
+      var arrow = active ? (ui.boxesSortDir==="asc"?"▲":"▼") : "⇅";
+      html += '<button class="sort-btn'+(active?" active":"")+'" style="width:auto;padding:0 8px;" onclick="setBoxesSort(\''+f.key+'\')">'+f.label+' '+arrow+'</button>';
+    });
+    html += '</div>';
+
+    var filtered = ui.boxesFilterRack ? all.filter(function(b){ return b.rack.name === ui.boxesFilterRack; }) : all;
+    filtered = sortBoxesWithSpace(filtered);
+
+    if(!filtered.length){
+      html += '<div class="no-results">No boxes with free space in this rack.</div>';
+      return html;
+    }
+    html += '<div class="recent-list">';
+    filtered.forEach(function(b){
+      html += '<div class="recent-row" onclick="jumpToBoxDirect(\''+b.box.id+'\')">' +
+        '<span class="cell-line">'+esc(b.box.name)+'</span>' +
+        '<span class="breadcrumb">'+esc(b.tank.name)+' › '+esc(b.rack.name)+'</span>' +
+        '<span class="when tabular">'+b.empty+' empty / '+b.tot+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function onBoxesFilterChange(v){ ui.boxesFilterRack = v; renderMain(); }
+  function setBoxesSort(key){
+    if(ui.boxesSortKey === key){ ui.boxesSortDir = ui.boxesSortDir === "asc" ? "desc" : "asc"; }
+    else{ ui.boxesSortKey = key; ui.boxesSortDir = key === "empty" ? "desc" : "asc"; }
+    renderMain();
+  }
+  function sortBoxesWithSpace(list){
+    var key = ui.boxesSortKey, dir = ui.boxesSortDir;
+    return list.slice().sort(function(a,b){
+      var av, bv;
+      if(key === "box"){ av = a.box.name.toLowerCase(); bv = b.box.name.toLowerCase(); }
+      else if(key === "rack"){ av = a.rack.name.toLowerCase(); bv = b.rack.name.toLowerCase(); }
+      else{ av = a.empty; bv = b.empty; }
+      var cmp = (typeof av === "number") ? av - bv : (av < bv ? -1 : av > bv ? 1 : 0);
+      return dir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  function renderCellLinesView(){
+    var html = '<div class="dash-head"><h1>Cell lines in stock</h1></div>';
+    html += renderFilterControls();
+    var cellLineCounts = computeCellLineCounts();
+    if(!cellLineCounts.length){
+      html += '<div class="no-results">No samples yet.</div>';
+      return html;
+    }
+    html += '<div class="recent-list">';
+    cellLineCounts.forEach(function(cl){
+      html += '<div class="recent-row" onclick="searchFor(\''+jsEsc(cl.label)+'\')">' +
+        '<span class="cell-line">'+esc(cl.label)+'</span>' +
+        '<span class="when tabular">'+cl.count+' vial'+(cl.count===1?"":"s")+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
 
   function jumpToFirstBox(tankId){
     var tank = state.tanks.find(function(t){return t.id===tankId;});
@@ -1189,7 +1257,7 @@
     if(!loc) return;
     ui.expandedTanks[loc.tank.id] = true;
     ui.expandedRacks[loc.rack.id] = true;
-    ui.searchQuery = ""; document.getElementById("search-input").value = ""; ui.view = "inventory";
+    ui.searchQuery = ""; document.getElementById("search-input").value = "";
     ui.selectedBoxId = boxId;
     ui.highlightPos = pos;
     renderSidebar(); renderMain();
@@ -2130,6 +2198,7 @@
   window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
   window.confirmDeleteTank=confirmDeleteTank; window.confirmDeleteRack=confirmDeleteRack; window.confirmDeleteBox=confirmDeleteBox;
   window.jumpToFirstBox=jumpToFirstBox; window.jumpToVial=jumpToVial; window.jumpToBoxDirect=jumpToBoxDirect;
+  window.onBoxesFilterChange=onBoxesFilterChange; window.setBoxesSort=setBoxesSort;
   window.exportCSV=exportCSV;
   window.openImportModal=openImportModal; window.submitImport=submitImport;
   window.downloadImportTemplate=downloadImportTemplate;
