@@ -62,6 +62,7 @@ create trigger on_auth_user_created
 create table if not exists public.tanks (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  sort_order integer not null default 0,
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -70,6 +71,7 @@ create table if not exists public.racks (
   id uuid primary key default gen_random_uuid(),
   tank_id uuid not null references public.tanks(id) on delete cascade,
   name text not null,
+  sort_order integer not null default 0,
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -80,9 +82,50 @@ create table if not exists public.boxes (
   name text not null,
   rows int not null default 9,
   cols int not null default 9,
+  sort_order integer not null default 0,
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
+
+-- in case these tables already existed from an earlier run of this script
+alter table public.tanks add column if not exists sort_order integer not null default 0;
+alter table public.racks add column if not exists sort_order integer not null default 0;
+alter table public.boxes add column if not exists sort_order integer not null default 0;
+
+-- one-time backfill: gives existing rows a stable order (oldest first) based on
+-- when they were created. Only touches a group (all racks under one tank, all
+-- boxes under one rack, or the whole tanks table) if EVERY row in it still has
+-- the untouched default of 0 — so it never overwrites an order you've already
+-- set by hand with the up/down arrows, on this or any later re-run.
+do $$
+begin
+  if coalesce((select bool_and(sort_order = 0) from public.tanks), true) then
+    with ranked as (
+      select id, row_number() over (order by created_at) - 1 as rn from public.tanks
+    )
+    update public.tanks t set sort_order = ranked.rn from ranked where ranked.id = t.id;
+  end if;
+end $$;
+
+with untouched_racks as (
+  select tank_id from public.racks group by tank_id having bool_and(sort_order = 0)
+),
+ranked_racks as (
+  select id, row_number() over (partition by tank_id order by created_at) - 1 as rn
+  from public.racks where tank_id in (select tank_id from untouched_racks)
+)
+update public.racks r set sort_order = ranked_racks.rn
+from ranked_racks where ranked_racks.id = r.id;
+
+with untouched_boxes as (
+  select rack_id from public.boxes group by rack_id having bool_and(sort_order = 0)
+),
+ranked_boxes as (
+  select id, row_number() over (partition by rack_id order by created_at) - 1 as rn
+  from public.boxes where rack_id in (select rack_id from untouched_boxes)
+)
+update public.boxes b set sort_order = ranked_boxes.rn
+from ranked_boxes where ranked_boxes.id = b.id;
 
 create table if not exists public.samples (
   id uuid primary key default gen_random_uuid(),

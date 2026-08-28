@@ -90,17 +90,16 @@
     background:var(--surface); border-bottom:1px solid var(--border);
   }
   .filter-bar{
-    display:flex; align-items:center; gap:10px; padding:8px 18px; flex:0 0 auto; flex-wrap:wrap;
-    background:var(--surface-2); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:10px; padding:9px 12px; flex-wrap:wrap;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px; margin:18px 0;
   }
   .filter-label{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.04em;}
   .filter-bar select{
     padding:5px 9px; border-radius:6px; border:1px solid var(--border); background:var(--surface);
     font-size:12.5px; max-width:180px;
   }
-  .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint);}
+  .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint); margin-left:auto;}
   .filter-bar a:hover{color:var(--accent);}
-  .filter-bar a[hidden]{display:none;}
   .pick-banner{
     display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 18px;
     background:var(--accent-soft); border-bottom:1px solid var(--accent); font-size:13px; color:var(--accent-strong);
@@ -197,6 +196,8 @@
     color:var(--text-faint); background:transparent; border:none;
   }
   .icon-btn:hover{background:var(--surface-3); color:var(--text);}
+  .icon-btn:disabled{opacity:0.25; cursor:default;}
+  .icon-btn:disabled:hover{background:transparent;}
   .icon-btn.danger:hover{color:var(--danger);}
 
   .main{flex:1 1 auto; overflow-y:auto; padding:26px 30px 60px;}
@@ -359,13 +360,6 @@
       <button class="btn" onclick="handleLogout()">Log out</button>
     </div>
   </header>
-  <div class="filter-bar">
-    <span class="filter-label">Filter</span>
-    <select id="filter-owner" onchange="onFilterChange('filterOwner', this.value)"><option value="">Researcher: all</option></select>
-    <select id="filter-clone" onchange="onFilterChange('filterClone', this.value)"><option value="">Clone: all</option></select>
-    <select id="filter-passage" onchange="onFilterChange('filterPassage', this.value)"><option value="">Passage: all</option></select>
-    <a id="filter-clear" onclick="clearFilters()" hidden>Clear filters</a>
-  </div>
   <div id="pick-banner" class="pick-banner" hidden></div>
   <div id="context-menu" class="context-menu" hidden></div>
   <div class="body-shell">
@@ -571,15 +565,18 @@
 
   async function loadData(){
     var res = await supabase.from("tanks").select(
-      "id, name, racks ( id, name, boxes ( id, name, rows, cols, samples ( id, position, cell_line, type, passage, freeze_date, count, medium, myco, clone, viability, owner, notes, created_at, created_by, updated_by ) ) )"
-    ).order("name");
+      "id, name, sort_order, racks ( id, name, sort_order, boxes ( id, name, rows, cols, sort_order, samples ( id, position, cell_line, type, passage, freeze_date, count, medium, myco, clone, viability, owner, notes, created_at, created_by, updated_by ) ) )"
+    )
+      .order("sort_order")
+      .order("sort_order", {foreignTable:"racks"})
+      .order("sort_order", {foreignTable:"racks.boxes"});
     if(res.error){ ui.saveError = res.error.message; renderSaveStatus(); return; }
     state.tanks = (res.data||[]).map(function(t){
       return {
-        id: t.id, name: t.name,
+        id: t.id, name: t.name, sortOrder: t.sort_order,
         racks: (t.racks||[]).map(function(r){
           return {
-            id: r.id, name: r.name,
+            id: r.id, name: r.name, sortOrder: r.sort_order,
             boxes: (r.boxes||[]).map(function(b){
               var vials = {};
               (b.samples||[]).forEach(function(s){
@@ -592,7 +589,7 @@
                   updatedBy: profileName(s.updated_by)
                 };
               });
-              return {id:b.id, name:b.name, rows:b.rows, cols:b.cols, vials:vials};
+              return {id:b.id, name:b.name, rows:b.rows, cols:b.cols, sortOrder:b.sort_order, vials:vials};
             })
           };
         })
@@ -632,7 +629,6 @@
   }
   async function refreshInventory(){
     await loadData();
-    populateFilters();
     renderSidebar(); renderMain(); renderPanel();
   }
 
@@ -645,7 +641,6 @@
     await loadProfiles();
     await loadPendingProfiles();
     await loadData();
-    populateFilters();
     state.tanks.forEach(function(t){ ui.expandedTanks[t.id] = true; });
     renderAll();
     subscribeRealtime();
@@ -795,19 +790,24 @@
   // ---------- CRUD ----------
   async function addTank(name){
     await withSaving(function(){
-      return supabase.from("tanks").insert({name:name, created_by:session.user.id});
+      return supabase.from("tanks").insert({name:name, sort_order:state.tanks.length, created_by:session.user.id});
     });
     await refreshInventory();
   }
   async function addRack(tankId, name){
+    var tank = state.tanks.find(function(t){return t.id===tankId;});
+    var nextOrder = tank ? tank.racks.length : 0;
     await withSaving(function(){
-      return supabase.from("racks").insert({tank_id:tankId, name:name, created_by:session.user.id});
+      return supabase.from("racks").insert({tank_id:tankId, name:name, sort_order:nextOrder, created_by:session.user.id});
     });
     await refreshInventory();
   }
   async function addBox(rackId, name, rows, cols){
+    var rack = null;
+    state.tanks.forEach(function(t){ var r = t.racks.find(function(x){return x.id===rackId;}); if(r) rack = r; });
+    var nextOrder = rack ? rack.boxes.length : 0;
     await withSaving(function(){
-      return supabase.from("boxes").insert({rack_id:rackId, name:name, rows:rows, cols:cols, created_by:session.user.id});
+      return supabase.from("boxes").insert({rack_id:rackId, name:name, rows:rows, cols:cols, sort_order:nextOrder, created_by:session.user.id});
     });
     await refreshInventory();
   }
@@ -822,6 +822,37 @@
   async function removeBox(boxId){
     await withSaving(function(){ return supabase.from("boxes").delete().eq("id", boxId); });
     await refreshInventory();
+  }
+
+  // Swaps sort_order between an item and its neighbor (dir: -1 up, +1 down)
+  // within the given sibling list (already in on-screen order).
+  async function moveSibling(entityType, siblings, id, dir){
+    var idx = siblings.findIndex(function(x){ return x.id===id; });
+    var swapIdx = idx + dir;
+    if(idx===-1 || swapIdx<0 || swapIdx>=siblings.length) return;
+    var a = siblings[idx], b = siblings[swapIdx];
+    var table = entityType==="tank" ? "tanks" : entityType==="rack" ? "racks" : "boxes";
+    await withSaving(function(){
+      return Promise.all([
+        supabase.from(table).update({sort_order:b.sortOrder}).eq("id", a.id),
+        supabase.from(table).update({sort_order:a.sortOrder}).eq("id", b.id)
+      ]).then(function(results){
+        var failed = results.find(function(r){ return r.error; });
+        return failed ? {error: failed.error} : {error:null};
+      });
+    });
+    await refreshInventory();
+  }
+
+  function moveTank(id, dir){ moveSibling("tank", state.tanks, id, dir); }
+  function moveRack(tankId, id, dir){
+    var tank = state.tanks.find(function(t){return t.id===tankId;});
+    if(tank) moveSibling("rack", tank.racks, id, dir);
+  }
+  function moveBox(rackId, id, dir){
+    var rack = null;
+    state.tanks.forEach(function(t){ var r = t.racks.find(function(x){return x.id===rackId;}); if(r) rack = r; });
+    if(rack) moveSibling("box", rack.boxes, id, dir);
   }
 
   function openRenameModal(entityType, id, currentName){
@@ -843,6 +874,7 @@
 
   function goHome(){
     ui.selectedCells = [];
+    ui.filterOwner = ""; ui.filterClone = ""; ui.filterPassage = "";
     setView("inventory");
   }
 
@@ -910,7 +942,7 @@
       return;
     }
     var html = renderSelectionList();
-    state.tanks.forEach(function(tank){
+    state.tanks.forEach(function(tank, tIdx){
       var open = !!ui.expandedTanks[tank.id];
       var occ = 0, tot = 0;
       tank.racks.forEach(function(r){ r.boxes.forEach(function(b){ occ+=boxOccupied(b); tot+=boxTotal(b); }); });
@@ -918,11 +950,14 @@
       html += '<div class="tree-row tank ' + (open?"open":"") + '" onclick="toggleTank(\''+tank.id+'\')">';
       html += '<span class="chev">▶</span><span class="name">'+esc(tank.name)+'</span>';
       html += '<span class="count">'+occ+'/'+tot+'</span>';
-      html += '<span class="row-actions"><button class="icon-btn" title="Rename tank" onclick="event.stopPropagation();openRenameModal(\'tank\',\''+tank.id+'\',\''+esc(tank.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete tank" onclick="event.stopPropagation();confirmDeleteTank(\''+tank.id+'\')">✕</button></span>';
+      html += '<span class="row-actions">' +
+        '<button class="icon-btn" title="Move up" '+(tIdx===0?"disabled":"")+' onclick="event.stopPropagation();moveTank(\''+tank.id+'\',-1)">▲</button>' +
+        '<button class="icon-btn" title="Move down" '+(tIdx===state.tanks.length-1?"disabled":"")+' onclick="event.stopPropagation();moveTank(\''+tank.id+'\',1)">▼</button>' +
+        '<button class="icon-btn" title="Rename tank" onclick="event.stopPropagation();openRenameModal(\'tank\',\''+tank.id+'\',\''+esc(tank.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete tank" onclick="event.stopPropagation();confirmDeleteTank(\''+tank.id+'\')">✕</button></span>';
       html += '</div>';
       if(open){
         html += '<div class="tree-children">';
-        tank.racks.forEach(function(rack){
+        tank.racks.forEach(function(rack, rIdx){
           var ropen = !!ui.expandedRacks[rack.id];
           var rocc=0, rtot=0;
           rack.boxes.forEach(function(b){ rocc+=boxOccupied(b); rtot+=boxTotal(b); });
@@ -930,16 +965,22 @@
           html += '<div class="tree-row rack '+(ropen?"open":"")+'" onclick="toggleRack(\''+rack.id+'\')">';
           html += '<span class="chev">▶</span><span class="name">'+esc(rack.name)+'</span>';
           html += '<span class="count">'+rocc+'/'+rtot+'</span>';
-          html += '<span class="row-actions"><button class="icon-btn" title="Rename rack" onclick="event.stopPropagation();openRenameModal(\'rack\',\''+rack.id+'\',\''+esc(rack.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete rack" onclick="event.stopPropagation();confirmDeleteRack(\''+rack.id+'\')">✕</button></span>';
+          html += '<span class="row-actions">' +
+            '<button class="icon-btn" title="Move up" '+(rIdx===0?"disabled":"")+' onclick="event.stopPropagation();moveRack(\''+tank.id+'\',\''+rack.id+'\',-1)">▲</button>' +
+            '<button class="icon-btn" title="Move down" '+(rIdx===tank.racks.length-1?"disabled":"")+' onclick="event.stopPropagation();moveRack(\''+tank.id+'\',\''+rack.id+'\',1)">▼</button>' +
+            '<button class="icon-btn" title="Rename rack" onclick="event.stopPropagation();openRenameModal(\'rack\',\''+rack.id+'\',\''+esc(rack.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete rack" onclick="event.stopPropagation();confirmDeleteRack(\''+rack.id+'\')">✕</button></span>';
           html += '</div>';
           if(ropen){
             html += '<div class="tree-children">';
-            rack.boxes.forEach(function(box){
+            rack.boxes.forEach(function(box, bIdx){
               var active = ui.selectedBoxId === box.id;
               html += '<div class="tree-row box '+(active?"active":"")+'" onclick="selectBox(\''+box.id+'\')">';
               html += '<span class="chev" style="visibility:hidden">▶</span><span class="name">'+esc(box.name)+'</span>';
               html += '<span class="count">'+boxOccupied(box)+'/'+boxTotal(box)+'</span>';
-              html += '<span class="row-actions"><button class="icon-btn" title="Rename box" onclick="event.stopPropagation();openRenameModal(\'box\',\''+box.id+'\',\''+esc(box.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete box" onclick="event.stopPropagation();confirmDeleteBox(\''+box.id+'\')">✕</button></span>';
+              html += '<span class="row-actions">' +
+                '<button class="icon-btn" title="Move up" '+(bIdx===0?"disabled":"")+' onclick="event.stopPropagation();moveBox(\''+rack.id+'\',\''+box.id+'\',-1)">▲</button>' +
+                '<button class="icon-btn" title="Move down" '+(bIdx===rack.boxes.length-1?"disabled":"")+' onclick="event.stopPropagation();moveBox(\''+rack.id+'\',\''+box.id+'\',1)">▼</button>' +
+                '<button class="icon-btn" title="Rename box" onclick="event.stopPropagation();openRenameModal(\'box\',\''+box.id+'\',\''+esc(box.name).replace(/'/g,"&#39;")+'\')">✎</button><button class="icon-btn danger" title="Delete box" onclick="event.stopPropagation();confirmDeleteBox(\''+box.id+'\')">✕</button></span>';
               html += '</div>';
             });
             html += '<div class="tree-add" onclick="openAddModal(\'box\',\''+rack.id+'\')">+ Box</div>';
@@ -1044,6 +1085,8 @@
       html += '</div>';
     });
     html += '</div>';
+
+    html += renderFilterControls();
 
     var cellLineCounts = computeCellLineCounts();
     if(cellLineCounts.length){
@@ -1184,26 +1227,6 @@
     return Object.keys(set).sort(function(a,b){ return a.localeCompare(b, undefined, {numeric:true}); });
   }
 
-  function populateFilters(){
-    var configs = [
-      {id:"filter-owner", get:function(v){return v.owner;}, allLabel:"Researcher: all", state:"filterOwner"},
-      {id:"filter-clone", get:function(v){return v.clone;}, allLabel:"Clone: all", state:"filterClone"},
-      {id:"filter-passage", get:function(v){return v.passage;}, allLabel:"Passage: all", state:"filterPassage"}
-    ];
-    configs.forEach(function(cfg){
-      var el = document.getElementById(cfg.id);
-      if(!el) return;
-      var values = distinctValues(cfg.get);
-      var current = ui[cfg.state];
-      var html = '<option value="">'+cfg.allLabel+'</option>';
-      values.forEach(function(v){
-        html += '<option value="'+esc(v)+'"'+(v===current?" selected":"")+'>'+esc(v)+'</option>';
-      });
-      el.innerHTML = html;
-      if(current && values.indexOf(current) === -1){ ui[cfg.state] = ""; el.value = ""; }
-    });
-  }
-
   function hasActiveFilters(){
     return !!(ui.filterOwner || ui.filterClone || ui.filterPassage);
   }
@@ -1211,17 +1234,30 @@
   function onFilterChange(key, value){
     ui[key] = value;
     ui.view = "inventory";
-    document.getElementById("filter-clear").hidden = !hasActiveFilters();
     renderMain();
   }
 
   function clearFilters(){
     ui.filterOwner = ""; ui.filterClone = ""; ui.filterPassage = "";
-    document.getElementById("filter-owner").value = "";
-    document.getElementById("filter-clone").value = "";
-    document.getElementById("filter-passage").value = "";
-    document.getElementById("filter-clear").hidden = true;
     renderMain();
+  }
+
+  function renderFilterControls(){
+    function opts(values, current, allLabel){
+      var html = '<option value=""'+(!current?" selected":"")+'>'+allLabel+'</option>';
+      values.forEach(function(v){
+        html += '<option value="'+esc(v)+'"'+(v===current?" selected":"")+'>'+esc(v)+'</option>';
+      });
+      return html;
+    }
+    var html = '<div class="filter-bar">';
+    html += '<span class="filter-label">Filter</span>';
+    html += '<select onchange="onFilterChange(\'filterOwner\', this.value)">'+opts(distinctValues(function(v){return v.owner;}), ui.filterOwner, "Researcher: all")+'</select>';
+    html += '<select onchange="onFilterChange(\'filterClone\', this.value)">'+opts(distinctValues(function(v){return v.clone;}), ui.filterClone, "Clone: all")+'</select>';
+    html += '<select onchange="onFilterChange(\'filterPassage\', this.value)">'+opts(distinctValues(function(v){return v.passage;}), ui.filterPassage, "Passage: all")+'</select>';
+    if(hasActiveFilters()) html += '<a onclick="clearFilters()">Clear filters</a>';
+    html += '</div>';
+    return html;
   }
 
   function renderSearchResults(){
@@ -1239,6 +1275,7 @@
     });
     var title = ui.searchQuery.trim() ? 'Results for "'+esc(ui.searchQuery)+'"' : "Filtered results";
     var html = '<div class="search-head"><h1>'+title+'</h1><span class="section-title" style="margin:0">'+results.length+' sample(s)</span></div>';
+    html += renderFilterControls();
     if(!results.length){
       html += '<div class="no-results">No samples match this search.</div>';
       return html;
@@ -1694,6 +1731,7 @@
   window.toggleCellSelection=toggleCellSelection; window.clearSelection=clearSelection;
   window.openAddModal=openAddModal; window.closeAddModal=closeAddModal;
   window.openRenameModal=openRenameModal; window.submitRename=submitRename;
+  window.moveTank=moveTank; window.moveRack=moveRack; window.moveBox=moveBox;
   window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
   window.confirmDeleteTank=confirmDeleteTank; window.confirmDeleteRack=confirmDeleteRack; window.confirmDeleteBox=confirmDeleteBox;
   window.jumpToFirstBox=jumpToFirstBox; window.jumpToVial=jumpToVial;
