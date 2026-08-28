@@ -101,6 +101,13 @@
   }
   .filter-bar a{font-size:12px; cursor:pointer; color:var(--text-faint); margin-left:auto;}
   .filter-bar a:hover{color:var(--accent);}
+  .sort-control{display:flex; align-items:center; gap:6px; margin:0 0 14px;}
+  .sort-btn{
+    width:26px; height:26px; border-radius:6px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text-faint); font-size:12px; line-height:1;
+  }
+  .sort-btn:hover{background:var(--surface-2); color:var(--text);}
+  .sort-btn.active{background:var(--accent); border-color:var(--accent); color:#fff;}
   .pick-banner{
     display:flex; align-items:center; justify-content:space-between; gap:8px 12px; padding:9px 18px; flex-wrap:wrap;
     background:var(--accent-soft); border-bottom:1px solid var(--accent); font-size:13px; color:var(--accent-strong);
@@ -453,6 +460,9 @@
     filterCellLine: "",
     filterMyco: "",
     filterType: "",
+    dateSortDir: "",
+    boxSortKey: "",
+    boxSortDir: "asc",
     pickMode: null,
     selectedCells: []
   };
@@ -907,6 +917,7 @@
     ui.selectedCells = [];
     ui.filterOwner = ""; ui.filterClone = ""; ui.filterPassage = "";
     ui.filterCellLine = ""; ui.filterMyco = ""; ui.filterType = "";
+    ui.dateSortDir = "";
     setView("inventory");
   }
 
@@ -1230,15 +1241,17 @@
     html += '</div>'; // .box-grid-col
 
     html += '<div class="box-list-col"><div class="section-title" style="margin-top:0">Samples in this box (A1 → '+rowLabel(box.rows)+box.cols+')</div>';
+    html += renderBoxSortControl();
     if(!orderedEntries.length){
       html += '<div class="no-results">No samples in this box yet.</div>';
     }else{
+      var listEntries = sortBoxEntries(orderedEntries);
       html += '<div class="recent-list">';
-      orderedEntries.forEach(function(e){
+      listEntries.forEach(function(e){
         html += '<div class="recent-row" onclick="openVialPanel(\''+box.id+'\',\''+e.pos+'\')">' +
           '<span class="pos mono">'+esc(e.pos)+'</span>' +
           '<span class="cell-line">'+esc(e.vial.cellLine||"(unnamed)")+'</span>' +
-          '<span class="when">P'+esc(e.vial.passage||"?")+' · '+esc(e.vial.owner||"—")+'</span>' +
+          '<span class="when">P'+esc(e.vial.passage||"?")+' · '+esc(e.vial.owner||"—")+' · '+fmtDate(e.vial.freezeDate)+'</span>' +
           '</div>';
       });
       html += '</div>';
@@ -1246,6 +1259,53 @@
     html += '</div>'; // .box-list-col
     html += '</div>'; // .box-layout
     return html;
+  }
+
+  function renderBoxSortControl(){
+    var fields = [
+      {key:"date", label:"Date"},
+      {key:"passage", label:"Passage"},
+      {key:"owner", label:"Researcher"},
+      {key:"cellLine", label:"Cell line"}
+    ];
+    var html = '<div class="sort-control"><span class="filter-label">Sort by</span>';
+    html += '<button class="sort-btn'+(!ui.boxSortKey?" active":"")+'" style="width:auto;padding:0 8px;" onclick="setBoxSort(\'\')">Position</button>';
+    fields.forEach(function(f){
+      var active = ui.boxSortKey === f.key;
+      var arrow = active ? (ui.boxSortDir === "asc" ? "▲" : "▼") : "⇅";
+      html += '<button class="sort-btn'+(active?" active":"")+'" style="width:auto;padding:0 8px;" onclick="setBoxSort(\''+f.key+'\')">'+f.label+' '+arrow+'</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function setBoxSort(key){
+    if(!key){ ui.boxSortKey = ""; ui.boxSortDir = "asc"; renderMain(); return; }
+    if(ui.boxSortKey === key){ ui.boxSortDir = ui.boxSortDir === "asc" ? "desc" : "asc"; }
+    else{ ui.boxSortKey = key; ui.boxSortDir = "asc"; }
+    renderMain();
+  }
+
+  function parsePassageNum(s){
+    var m = /(\d+)/.exec(String(s||""));
+    return m ? parseInt(m[1],10) : "";
+  }
+
+  function sortBoxEntries(entries){
+    if(!ui.boxSortKey) return entries;
+    var key = ui.boxSortKey, dir = ui.boxSortDir;
+    return entries.slice().sort(function(a,b){
+      var av, bv;
+      if(key === "date"){ av = a.vial.freezeDate||""; bv = b.vial.freezeDate||""; }
+      else if(key === "passage"){ av = parsePassageNum(a.vial.passage); bv = parsePassageNum(b.vial.passage); }
+      else if(key === "owner"){ av = (a.vial.owner||"").toLowerCase(); bv = (b.vial.owner||"").toLowerCase(); }
+      else{ av = (a.vial.cellLine||"").toLowerCase(); bv = (b.vial.cellLine||"").toLowerCase(); }
+      if(av === "" && bv === "") return 0;
+      if(av === "") return 1;
+      if(bv === "") return -1;
+      var cmp = (typeof av === "number") ? av - bv : (av < bv ? -1 : av > bv ? 1 : 0);
+      return dir === "asc" ? cmp : -cmp;
+    });
   }
 
   function normalizeSearch(s){
@@ -1331,6 +1391,11 @@
     renderMain();
   }
 
+  function setDateSort(dir){
+    ui.dateSortDir = (ui.dateSortDir === dir) ? "" : dir;
+    renderMain();
+  }
+
   function renderFilterControls(){
     function opts(values, current, allLabel){
       var html = '<option value=""'+(!current?" selected":"")+'>'+allLabel+'</option>';
@@ -1381,9 +1446,22 @@
       if(ui.filterMyco === "unset" && v.myco) return false;
       return true;
     });
+    if(ui.dateSortDir){
+      results.sort(function(a,b){
+        var da = a.vial.freezeDate || "", db = b.vial.freezeDate || "";
+        if(!da && !db) return 0;
+        if(!da) return 1;
+        if(!db) return -1;
+        return ui.dateSortDir === "asc" ? da.localeCompare(db) : db.localeCompare(da);
+      });
+    }
     var title = ui.searchQuery.trim() ? 'Results for "'+esc(ui.searchQuery)+'"' : "Filtered results";
     var html = '<div class="search-head"><h1>'+title+'</h1><span class="section-title" style="margin:0">'+results.length+' sample(s)</span></div>';
     html += renderFilterControls();
+    html += '<div class="sort-control"><span class="filter-label">Sort by freeze date</span>' +
+      '<button class="sort-btn'+(ui.dateSortDir==="asc"?" active":"")+'" onclick="setDateSort(\'asc\')" title="Oldest first">▲</button>' +
+      '<button class="sort-btn'+(ui.dateSortDir==="desc"?" active":"")+'" onclick="setDateSort(\'desc\')" title="Newest first">▼</button>' +
+      '</div>';
     if(!results.length){
       html += '<div class="no-results">No samples match this search.</div>';
       return html;
@@ -2036,7 +2114,8 @@
   window.setView=setView; window.goHome=goHome;
   window.toggleTank=toggleTank; window.toggleRack=toggleRack; window.selectBox=selectBox;
   window.onSearchInput=onSearchInput; window.searchFor=searchFor;
-  window.onFilterChange=onFilterChange; window.clearFilters=clearFilters;
+  window.onFilterChange=onFilterChange; window.clearFilters=clearFilters; window.setDateSort=setDateSort;
+  window.setBoxSort=setBoxSort;
   window.openVialPanel=openVialPanel; window.closeVialPanel=closeVialPanel;
   window.saveVial=saveVial; window.deleteVial=deleteVial;
   window.startDuplicatePick=startDuplicatePick; window.startMovePick=startMovePick;
