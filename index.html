@@ -109,6 +109,28 @@
   .pick-banner .btn{flex:0 0 auto;}
   .cell.pickable{border-style:solid; border-color:var(--cyan); background:var(--accent-soft); color:var(--accent-strong); cursor:pointer;}
   .cell.pickable:hover{background:var(--cyan); color:#fff;}
+  .cell.selected{outline:2px solid var(--cyan); outline-offset:1px;}
+
+  .selection-box{border:1px solid var(--accent); border-radius:8px; margin-bottom:12px; overflow:hidden; background:var(--accent-soft);}
+  .selection-head{display:flex; justify-content:space-between; align-items:center; padding:7px 10px; font-size:11.5px; font-weight:600; color:var(--accent-strong); text-transform:uppercase; letter-spacing:0.03em;}
+  .selection-head a{cursor:pointer; font-weight:500; text-transform:none; letter-spacing:0; font-size:11.5px;}
+  .selection-row{display:flex; justify-content:space-between; gap:8px; padding:5px 10px; font-size:12px; cursor:pointer; border-top:1px solid var(--border);}
+  .selection-row:hover{background:var(--surface-3);}
+  .selection-row .pos{font-weight:600;}
+  .selection-row .who{color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
+  .context-menu{
+    position:fixed; z-index:60; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    box-shadow:var(--shadow); padding:4px; display:flex; flex-direction:column; min-width:150px;
+  }
+  .context-menu[hidden]{display:none;}
+  .context-menu button{
+    display:block; width:100%; text-align:left; padding:7px 10px; border-radius:5px; background:transparent; border:none;
+    font-size:13px; color:var(--text);
+  }
+  .context-menu button:hover{background:var(--surface-2);}
+  .context-menu button.danger{color:var(--danger);}
+  .context-menu button.danger:hover{background:var(--danger-soft);}
   .brand{display:flex; align-items:baseline; gap:8px; flex:0 0 auto;}
   .brand .mark{font-family:var(--font-display); font-weight:700; font-size:19px; letter-spacing:-0.01em;}
   .brand .tagline{font-size:11.5px; color:var(--text-faint); display:none;}
@@ -345,6 +367,7 @@
     <a id="filter-clear" onclick="clearFilters()" hidden>Clear filters</a>
   </div>
   <div id="pick-banner" class="pick-banner" hidden></div>
+  <div id="context-menu" class="context-menu" hidden></div>
   <div class="body-shell">
     <nav id="sidebar" class="sidebar"></nav>
     <main id="main" class="main"></main>
@@ -405,7 +428,8 @@
     filterOwner: "",
     filterClone: "",
     filterPassage: "",
-    pickMode: null
+    pickMode: null,
+    selectedCells: []
   };
   var realtimeChannel = null;
 
@@ -847,13 +871,40 @@
     renderMain();
   });
 
+  function renderSelectionList(){
+    if(!ui.selectedCells.length) return "";
+    var html = '<div class="selection-box"><div class="selection-head"><span>Selected ('+ui.selectedCells.length+')</span><a onclick="clearSelection()">Clear</a></div>';
+    ui.selectedCells.forEach(function(c){
+      var loc = locateBox(c.boxId);
+      var v = loc && loc.box.vials[c.pos];
+      if(!v) return;
+      html += '<div class="selection-row" onclick="toggleCellSelection(\''+c.boxId+'\',\''+c.pos+'\')" title="Click to remove from selection">' +
+        '<span class="pos mono">'+esc(c.pos)+'</span>' +
+        '<span class="who">P'+esc(v.passage||"?")+' · '+esc(v.owner||"—")+'</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+  function clearSelection(){
+    ui.selectedCells = [];
+    renderSidebar(); renderMain();
+  }
+  function toggleCellSelection(boxId, pos){
+    if(ui.selectedCells.length && ui.selectedCells[0].boxId !== boxId){ ui.selectedCells = []; }
+    var idx = ui.selectedCells.findIndex(function(c){ return c.boxId===boxId && c.pos===pos; });
+    if(idx === -1) ui.selectedCells.push({boxId:boxId, pos:pos});
+    else ui.selectedCells.splice(idx,1);
+    renderSidebar(); renderMain();
+  }
+
   function renderSidebar(){
     var el = document.getElementById("sidebar");
     if(state.tanks.length === 0){
-      el.innerHTML = '<div class="tree-add" onclick="openAddModal(\'tank\')">+ Add tank</div>';
+      el.innerHTML = renderSelectionList() + '<div class="tree-add" onclick="openAddModal(\'tank\')">+ Add tank</div>';
       return;
     }
-    var html = "";
+    var html = renderSelectionList();
     state.tanks.forEach(function(tank){
       var open = !!ui.expandedTanks[tank.id];
       var occ = 0, tot = 0;
@@ -903,7 +954,7 @@
   function toggleTank(id){ ui.expandedTanks[id] = !ui.expandedTanks[id]; renderSidebar(); }
   function toggleRack(id){ ui.expandedRacks[id] = !ui.expandedRacks[id]; renderSidebar(); }
   function selectBox(id){
-    ui.selectedBoxId = id; ui.searchQuery = ""; ui.view = "inventory";
+    ui.selectedBoxId = id; ui.searchQuery = ""; ui.view = "inventory"; ui.selectedCells = [];
     document.getElementById("search-input").value = "";
     renderSidebar(); renderMain();
     pushViewState();
@@ -1070,7 +1121,8 @@
           var t = TYPES[vial.type] || TYPES.other;
           var mycoTitle = vial.myco==="negative" ? ", mycoplasma negative" : "";
           var mycoBadge = vial.myco==="negative" ? '<span class="myco-badge negative"></span>' : "";
-          html += '<button class="cell filled'+hl+'" style="background:var('+t.cssVar+')" title="'+esc(vial.cellLine||"")+' — P'+esc(vial.passage||"?")+mycoTitle+' · drag to move, right-click to duplicate" draggable="true" ondragstart="onCellDragStart(event,\''+box.id+'\',\''+pos+'\')" oncontextmenu="event.preventDefault();startDuplicatePick(\''+box.id+'\',\''+pos+'\')" onclick="openVialPanel(\''+box.id+'\',\''+pos+'\')">'+pos+mycoBadge+'</button>';
+          var isSel = ui.selectedCells.some(function(sc){ return sc.boxId===box.id && sc.pos===pos; });
+          html += '<button class="cell filled'+hl+(isSel?" selected":"")+'" style="background:var('+t.cssVar+')" title="'+esc(vial.cellLine||"")+' — P'+esc(vial.passage||"?")+mycoTitle+' · Ctrl-click to select, drag to move, right-click for menu" draggable="true" ondragstart="onCellDragStart(event,\''+box.id+'\',\''+pos+'\')" oncontextmenu="openCellContextMenu(event,\''+box.id+'\',\''+pos+'\')" onclick="handleCellClick(event,\''+box.id+'\',\''+pos+'\')">'+pos+mycoBadge+'</button>';
         }else if(ui.pickMode){
           html += '<button class="cell pickable" title="Click to place here" ondragover="event.preventDefault()" ondrop="onCellDrop(event,\''+box.id+'\',\''+pos+'\')" onclick="resolvePick(\''+box.id+'\',\''+pos+'\')">'+pos+'</button>';
         }else{
@@ -1306,24 +1358,31 @@
   }
 
   // ---------- duplicate / move by clicking a target position ----------
+  // Pick mode processes a QUEUE of {boxId, pos, vial|cellLine} items one at a
+  // time (queue length 1 for a single sample, >1 for a multi-selection) — each
+  // click on an empty cell resolves the current item and advances the queue.
   function startDuplicatePick(boxId, pos){
     var loc = locateBox(boxId);
     var vial = loc && loc.box.vials[pos];
     if(!vial) return;
-    ui.pickMode = {kind:"duplicate", sourceBoxId:boxId, sourcePos:pos, vial:vial};
-    ui.editingPos = null;
-    renderPickBanner();
-    renderPanel();
-    renderMain();
+    startPickQueue("duplicate", [{boxId:boxId, pos:pos, vial:vial}]);
   }
 
   function startMovePick(boxId, pos){
     var loc = locateBox(boxId);
-    if(!loc || !loc.box.vials[pos]) return;
-    ui.pickMode = {kind:"move", sourceBoxId:boxId, sourcePos:pos, cellLine:loc.box.vials[pos].cellLine};
+    var vial = loc && loc.box.vials[pos];
+    if(!vial) return;
+    startPickQueue("move", [{boxId:boxId, pos:pos, cellLine:vial.cellLine}]);
+  }
+
+  function startPickQueue(kind, items){
+    if(!items.length) return;
+    ui.pickMode = {kind:kind, queue:items, index:0};
     ui.editingPos = null;
+    ui.selectedCells = [];
     renderPickBanner();
     renderPanel();
+    renderSidebar();
     renderMain();
   }
 
@@ -1333,7 +1392,7 @@
     renderMain();
   }
 
-  // ---------- drag-and-drop move ----------
+  // ---------- drag-and-drop move (single item, quick path) ----------
   var dragSource = null;
   function onCellDragStart(e, boxId, pos){
     dragSource = {boxId:boxId, pos:pos};
@@ -1356,10 +1415,11 @@
   async function resolvePick(targetBoxId, targetPos){
     if(!ui.pickMode) return;
     var m = ui.pickMode;
-    if(targetBoxId === m.sourceBoxId && targetPos === m.sourcePos) return;
+    var item = m.queue[m.index];
+    if(targetBoxId === item.boxId && targetPos === item.pos) return; // no-op on itself
 
     if(m.kind === "duplicate"){
-      var v = m.vial;
+      var v = item.vial;
       await withSaving(function(){
         return supabase.from("samples").insert({
           box_id: targetBoxId, position: targetPos,
@@ -1369,18 +1429,19 @@
           owner: v.owner, notes: v.notes
         });
       });
-      await refreshInventory();
-      renderPickBanner(); // stays active: click more empty cells to stamp more copies, or Done
     }else{
       await withSaving(function(){
         return supabase.from("samples")
           .update({box_id: targetBoxId, position: targetPos})
-          .eq("box_id", m.sourceBoxId).eq("position", m.sourcePos);
+          .eq("box_id", item.boxId).eq("position", item.pos);
       });
-      ui.pickMode = null;
-      await refreshInventory();
-      renderPickBanner();
     }
+    await refreshInventory();
+    if(ui.pickMode){
+      ui.pickMode.index++;
+      if(ui.pickMode.index >= ui.pickMode.queue.length) ui.pickMode = null;
+    }
+    renderPickBanner();
   }
 
   function renderPickBanner(){
@@ -1389,13 +1450,96 @@
     if(!ui.pickMode){ el.hidden = true; return; }
     el.hidden = false;
     var m = ui.pickMode;
+    var item = m.queue[m.index];
+    var label = (item.vial && item.vial.cellLine) || item.cellLine || "sample";
+    var progress = m.queue.length > 1 ? ' ('+(m.index+1)+' of '+m.queue.length+')' : '';
     if(m.kind === "duplicate"){
-      el.innerHTML = '<span>Duplicating "'+esc(m.vial.cellLine||"sample")+'" — click empty positions (any box) to place copies.</span>' +
+      el.innerHTML = '<span>Duplicating "'+esc(label)+'"'+progress+' — click an empty position (any box) to place it.</span>' +
         '<button class="btn btn-sm" onclick="cancelPick()">Done</button>';
     }else{
-      el.innerHTML = '<span>Moving "'+esc(m.cellLine||"sample")+'" from '+m.sourcePos+' — click an empty position to move it there.</span>' +
+      el.innerHTML = '<span>Moving "'+esc(label)+'"'+progress+' from '+esc(item.pos)+' — click an empty position to move it there.</span>' +
         '<button class="btn btn-sm" onclick="cancelPick()">Cancel</button>';
     }
+  }
+
+  // ---------- right-click context menu (single cell or the whole selection) ----------
+  function handleCellClick(e, boxId, pos){
+    if(e.ctrlKey || e.metaKey){ toggleCellSelection(boxId, pos); }
+    else{ openVialPanel(boxId, pos); }
+  }
+
+  function openCellContextMenu(e, boxId, pos){
+    e.preventDefault();
+    var alreadySelected = ui.selectedCells.some(function(c){ return c.boxId===boxId && c.pos===pos; });
+    if(!alreadySelected){
+      ui.selectedCells = [{boxId:boxId, pos:pos}];
+      renderSidebar(); renderMain();
+    }
+    var n = ui.selectedCells.length;
+    var suffix = n > 1 ? " (" + n + ")" : "";
+    var menu = document.getElementById("context-menu");
+    menu.innerHTML =
+      '<button onclick="ctxDuplicate()">Duplicate'+suffix+'</button>' +
+      '<button onclick="ctxMove()">Move'+suffix+'</button>' +
+      '<button class="danger" onclick="ctxRemove()">Remove'+suffix+'</button>';
+    var x = e.clientX, y = e.clientY;
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    menu.hidden = false;
+    // keep it on-screen if opened near the right/bottom edge
+    requestAnimationFrame(function(){
+      var r = menu.getBoundingClientRect();
+      if(r.right > window.innerWidth) menu.style.left = Math.max(4, window.innerWidth - r.width - 8) + "px";
+      if(r.bottom > window.innerHeight) menu.style.top = Math.max(4, window.innerHeight - r.height - 8) + "px";
+    });
+  }
+  function closeContextMenu(){
+    var menu = document.getElementById("context-menu");
+    if(menu) menu.hidden = true;
+  }
+  document.addEventListener("click", function(e){
+    var menu = document.getElementById("context-menu");
+    if(menu && !menu.hidden && !menu.contains(e.target)) closeContextMenu();
+  });
+  document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeContextMenu(); });
+
+  function collectSelectedItems(){
+    var items = [];
+    ui.selectedCells.forEach(function(c){
+      var loc = locateBox(c.boxId);
+      var v = loc && loc.box.vials[c.pos];
+      if(v) items.push({boxId:c.boxId, pos:c.pos, vial:v, cellLine:v.cellLine});
+    });
+    return items;
+  }
+
+  function ctxDuplicate(){
+    closeContextMenu();
+    startPickQueue("duplicate", collectSelectedItems());
+  }
+  function ctxMove(){
+    closeContextMenu();
+    startPickQueue("move", collectSelectedItems());
+  }
+  async function ctxRemove(){
+    closeContextMenu();
+    var items = ui.selectedCells.slice();
+    if(!items.length) return;
+    if(!confirm("Delete " + items.length + " sample(s)? This can't be undone.")) return;
+    var byBox = {};
+    items.forEach(function(c){ (byBox[c.boxId] = byBox[c.boxId] || []).push(c.pos); });
+    await withSaving(function(){
+      var calls = Object.keys(byBox).map(function(boxId){
+        return supabase.from("samples").delete().eq("box_id", boxId).in("position", byBox[boxId]);
+      });
+      return Promise.all(calls).then(function(results){
+        var failed = results.find(function(r){ return r.error; });
+        return failed ? {error: failed.error} : {error:null};
+      });
+    });
+    ui.selectedCells = [];
+    ui.editingPos = null;
+    await refreshInventory();
   }
 
   // ---------- add modals ----------
@@ -1540,6 +1684,9 @@
   window.startDuplicatePick=startDuplicatePick; window.startMovePick=startMovePick;
   window.cancelPick=cancelPick; window.resolvePick=resolvePick;
   window.onCellDragStart=onCellDragStart; window.onCellDrop=onCellDrop;
+  window.handleCellClick=handleCellClick; window.openCellContextMenu=openCellContextMenu;
+  window.ctxDuplicate=ctxDuplicate; window.ctxMove=ctxMove; window.ctxRemove=ctxRemove;
+  window.toggleCellSelection=toggleCellSelection; window.clearSelection=clearSelection;
   window.openAddModal=openAddModal; window.closeAddModal=closeAddModal;
   window.openRenameModal=openRenameModal; window.submitRename=submitRename;
   window.submitAddTank=submitAddTank; window.submitAddRack=submitAddRack; window.submitAddBox=submitAddBox;
